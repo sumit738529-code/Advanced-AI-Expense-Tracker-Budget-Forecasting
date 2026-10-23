@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Settings & Preferences · SpendSense AI{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center py-4">
+  <div class="col-lg-7">
+    <div class="panel shadow-sm mb-4">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+          <span class="eyebrow">PREFERENCES</span>
+          <h2 class="h3 fw-bold mt-1 mb-0">Account & Profile Settings</h2>
+        </div>
+        <a class="btn btn-outline-secondary btn-sm rounded-pill px-3" href="{{ url_for('dashboard') }}">
+          &larr; Back to Dashboard
+        </a>
+      </div>
+
+      <form method="post">
+        <div class="row g-3 mb-4">
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold text-secondary">Full Name</label>
+            <input type="text" class="form-control" name="name" value="{{ user.name }}" required maxlength="100">
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold text-secondary">Email Address (Read-only)</label>
+            <input type="email" class="form-control bg-light" value="{{ user.email }}" readonly>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold text-secondary">Display Currency</label>
+            <select class="form-select" name="currency">
+              <option value="₹" {% if user.currency == '₹' %}selected{% endif %}>₹ - Indian Rupee (INR)</option>
+              <option value="$" {% if user.currency == '$' %}selected{% endif %}>$ - US Dollar (USD)</option>
+              <option value="€" {% if user.currency == '€' %}selected{% endif %}>€ - Euro (EUR)</option>
+              <option value="£" {% if user.currency == '£' %}selected{% endif %}>£ - British Pound (GBP)</option>
+            </select>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold text-secondary">Monthly Base Income Target ({{ user.currency }})</label>
+            <input type="number" step="100" class="form-control" name="monthly_income" value="{{ user.monthly_income }}">
+          </div>
+
+          <div class="col-12 border-top pt-3 mt-3">
+            <h6 class="fw-bold text-dark mb-2">Change Password</h6>
+            <label class="form-label small fw-semibold text-secondary">New Password (leave blank to keep current)</label>
+            <input type="password" class="form-control" name="new_password" placeholder="Enter new password (min. 8 characters)" minlength="8">
+          </div>
+        </div>
+
+        <button class="btn btn-primary rounded-pill px-4 py-2 fw-semibold" type="submit">
+          Save Settings & Preferences
+        </button>
+      </form>
+    </div>
+
+    <!-- System Diagnostics Card -->
+    <div class="panel shadow-sm">
+      <h6 class="fw-bold mb-3"><i class="bi bi-info-circle text-primary me-2"></i>Project System Diagnostics</h6>
+      <div class="row g-2 small text-secondary">
+        <div class="col-6">Account ID: <strong class="text-dark">#{{ user.id }}</strong></div>
+        <div class="col-6">Member Since: <strong class="text-dark">{{ user.created_at.strftime("%d %B %Y") }}</strong></div>
+        <div class="col-6">Database Engine: <strong class="text-dark">{{ "PostgreSQL" if "postgresql" in config.SQLALCHEMY_DATABASE_URI else "SQLite Local" }}</strong></div>
+        <div class="col-6">AI Text Model: <strong class="text-dark">TF-IDF + Multinomial NB</strong></div>
+        <div class="col-6">Forecasting Model: <strong class="text-dark">Double Exponential + OLS + WMA</strong></div>
+        <div class="col-6">Deployment Target: <strong class="text-dark">Render Cloud Web Service</strong></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

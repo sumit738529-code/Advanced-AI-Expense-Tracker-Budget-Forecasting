@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}{{ action }} Transaction · SpendSense AI{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="form-card">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <span class="eyebrow">{{ action|upper }} TRANSACTION RECORD</span>
+          <h2 class="h3 fw-bold mt-1 mb-0">{{ action }} Transaction</h2>
+        </div>
+        <a class="btn btn-sm btn-outline-secondary rounded-pill" href="{{ url_for('transactions') }}">
+          <i class="bi bi-arrow-left me-1"></i> Back to Transactions
+        </a>
+      </div>
+      <p class="text-secondary small mb-4">
+        Enter transaction details. Our TF-IDF + Multinomial Naive Bayes engine will predict category & confidence in real-time.
+      </p>
+
+      <form method="post" id="txForm">
+        <div class="row g-3">
+          <!-- Description with Live AI Badge -->
+          <div class="col-12">
+            <label class="form-label fw-semibold">Description / Merchant / Item</label>
+            <input 
+              type="text" 
+              class="form-control form-control-lg" 
+              name="description" 
+              id="descInput" 
+              placeholder="e.g. Swiggy dinner order with friends, Uber to office, Monthly rent" 
+              value="{{ transaction.description if transaction else '' }}" 
+              maxlength="255" 
+              required
+              autocomplete="off"
+            >
+            <!-- Live AI Category Feedback Pill -->
+            <div id="aiSuggestionBox" class="mt-2 p-2 rounded-3 small d-flex align-items-center justify-content-between" style="background: #eef2ff; border: 1px solid #c7d2fe; display: none !important;">
+              <div class="d-flex align-items-center gap-2">
+                <i class="bi bi-stars text-primary fs-5"></i>
+                <div>
+                  <span class="text-secondary">AI Suggested:</span>
+                  <strong id="aiCategoryName" class="text-primary ms-1">Food</strong>
+                  <span id="aiConfidenceBadge" class="badge bg-primary text-white ms-2">92% match</span>
+                  <span id="aiTokens" class="text-muted ms-2" style="font-size: 0.75rem;"></span>
+                </div>
+              </div>
+              <button type="button" class="btn btn-sm btn-link text-primary p-0 fw-semibold text-decoration-none" id="applyAiBtn">
+                Apply &rarr;
+              </button>
+            </div>
+          </div>
+
+          <!-- Amount & Date -->
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Amount ({{ active_currency }})</label>
+            <div class="input-group">
+              <span class="input-group-text bg-light fw-bold">{{ active_currency }}</span>
+              <input 
+                type="number" 
+                class="form-control" 
+                name="amount" 
+                id="amountInput"
+                step="0.01" 
+                min="0.01" 
+                placeholder="0.00" 
+                value="{{ transaction.amount if transaction else '' }}" 
+                required
+              >
+            </div>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Transaction Date</label>
+            <input 
+              type="date" 
+              class="form-control" 
+              name="tx_date" 
+              value="{{ today }}" 
+              required
+            >
+          </div>
+
+          <!-- Type, Category, Payment Method -->
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Transaction Type</label>
+            <select class="form-select" name="kind" id="kindSelect">
+              <option value="expense" {% if transaction and transaction.kind == 'expense' %}selected{% endif %}>Expense</option>
+              <option value="income" {% if transaction and transaction.kind == 'income' %}selected{% endif %}>Income</option>
+            </select>
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Category</label>
+            <select class="form-select" name="category" id="categorySelect">
+              <option value="">-- Auto-Assign via AI --</option>
+              {% for c in categories %}
+                <option value="{{ c }}" {% if transaction and transaction.category == c %}selected{% endif %}>{{ c }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Payment Method</label>
+            <select class="form-select" name="payment_method">
+              {% set curr_pm = transaction.payment_method if transaction else 'UPI' %}
+              <option value="UPI" {% if curr_pm == 'UPI' %}selected{% endif %}>UPI / QR</option>
+              <option value="Credit Card" {% if curr_pm == 'Credit Card' %}selected{% endif %}>Credit Card</option>
+              <option value="Debit Card" {% if curr_pm == 'Debit Card' %}selected{% endif %}>Debit Card</option>
+              <option value="Net Banking" {% if curr_pm == 'Net Banking' %}selected{% endif %}>Net Banking</option>
+              <option value="Cash" {% if curr_pm == 'Cash' %}selected{% endif %}>Cash</option>
+            </select>
+          </div>
+
+          <!-- Notes -->
+          <div class="col-12">
+            <label class="form-label fw-semibold">Notes / Tags (Optional)</label>
+            <input 
+              type="text" 
+              class="form-control" 
+              name="notes" 
+              placeholder="e.g. Split with Alex, Tax deductible receipt, etc." 
+              value="{{ transaction.notes if transaction else '' }}"
+            >
+          </div>
+        </div>
+
+        <div class="alert alert-light border mt-4 p-3 small text-secondary">
+          <i class="bi bi-info-circle text-primary me-1"></i>
+          <strong>AI Transparency:</strong> Category suggestions are computed locally using an explainable TF-IDF Vectorizer and Laplace-smoothed Multinomial Naive Bayes classifier. You always maintain full control to override.
+        </div>
+
+        <div class="d-flex align-items-center gap-2 mt-4">
+          <button class="btn btn-primary px-4 rounded-pill" type="submit">
+            <i class="bi bi-check2-circle me-1"></i> Save Transaction
+          </button>
+          <a class="btn btn-outline-secondary rounded-pill px-3" href="{{ url_for('transactions') }}">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Real-time AI Categorization on keystroke debounce
+  const descInput = document.getElementById('descInput');
+  const aiBox = document.getElementById('aiSuggestionBox');
+  const aiCatName = document.getElementById('aiCategoryName');
+  const aiConfBadge = document.getElementById('aiConfidenceBadge');
+  const aiTokens = document.getElementById('aiTokens');
+  const applyAiBtn = document.getElementById('applyAiBtn');
+  const catSelect = document.getElementById('categorySelect');
+
+  let debounceTimer = null;
+  let lastSuggestedCategory = '';
+
+  descInput.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    const text = descInput.value.trim();
+    if (text.length < 3) {
+      aiBox.style.setProperty('display', 'none', 'important');
+      return;
+    }
+
+    debounceTimer = setTimeout(async () => {
+      try {
+        const res = await fetch('{{ url_for("api_categorize") }}', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({description: text})
+        });
+        const data = await res.json();
+        if (data && data.category) {
+          lastSuggestedCategory = data.category;
+          aiCatName.innerText = data.category;
+          aiConfBadge.innerText = Math.round(data.confidence * 100) + '% match';
+          aiTokens.innerText = data.top_tokens.length ? 'Tokens: ' + data.top_tokens.join(', ') : '';
+          aiBox.style.setProperty('display', 'flex', 'important');
+
+          // If category select is empty, auto-select it
+          if (!catSelect.value) {
+            catSelect.value = data.category;
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }, 250);
+  });
+
+  applyAiBtn.addEventListener('click', () => {
+    if (lastSuggestedCategory) {
+      catSelect.value = lastSuggestedCategory;
+    }
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Create Account · SpendSense AI{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center py-4">
+  <div class="col-md-6 col-lg-5">
+    <div class="panel shadow-sm">
+      <div class="text-center mb-4">
+        <span class="eyebrow">GET STARTED FREE</span>
+        <h2 class="fw-bold mt-1 mb-1">Create Account</h2>
+        <p class="text-secondary small">Set up your private expense ledger with AI intelligence</p>
+      </div>
+
+      <form method="post">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold text-secondary">Full Name</label>
+          <input type="text" class="form-control" name="name" placeholder="Alex Morgan" required maxlength="100" autocomplete="name">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label small fw-semibold text-secondary">Email Address</label>
+          <input type="email" class="form-control" name="email" placeholder="alex@university.edu" required autocomplete="email">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label small fw-semibold text-secondary">Preferred Currency</label>
+          <select class="form-select" name="currency">
+            <option value="₹">₹ - Indian Rupee (INR)</option>
+            <option value="$">$ - US Dollar (USD)</option>
+            <option value="€">€ - Euro (EUR)</option>
+            <option value="£">£ - British Pound (GBP)</option>
+          </select>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label small fw-semibold text-secondary">Password</label>
+          <input type="password" class="form-control" name="password" placeholder="Minimum 8 characters" minlength="8" required autocomplete="new-password">
+          <div class="form-text small text-muted">Password must be at least 8 characters.</div>
+        </div>
+
+        <button class="btn btn-primary w-100 rounded-pill py-2 fw-semibold" type="submit">
+          Create Account & Access Dashboard
+        </button>
+      </form>
+
+      <div class="text-center mt-4 small text-secondary">
+        Already registered? <a href="{{ url_for('login') }}" class="text-primary fw-semibold text-decoration-none">Sign In</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

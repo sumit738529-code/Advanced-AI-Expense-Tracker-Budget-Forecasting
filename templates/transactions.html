@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Transactions · SpendSense AI{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <span class="eyebrow">TRANSACTION LEDGER</span>
+    <h1 class="h2 fw-bold mt-1 mb-0">Recorded Transactions</h1>
+    <p class="text-secondary small mb-0">Search, filter, and review AI classification & spending anomalies</p>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <a class="btn btn-outline-secondary btn-sm rounded-pill px-3" href="{{ url_for('import_csv') }}">
+      <i class="bi bi-upload me-1"></i> Import CSV
+    </a>
+    <a class="btn btn-primary btn-sm rounded-pill px-3" href="{{ url_for('new_transaction') }}">
+      <i class="bi bi-plus-lg me-1"></i> Add Transaction
+    </a>
+  </div>
+</div>
+
+<!-- Filters Panel -->
+<div class="panel mb-4 shadow-sm">
+  <form class="row g-3 align-items-end" method="get">
+    <div class="col-md-3 col-sm-6">
+      <label class="form-label small fw-semibold text-secondary">Category</label>
+      <select class="form-select form-select-sm" name="category">
+        <option value="">All Categories</option>
+        {% for c in categories %}
+          <option value="{{ c }}" {% if request.args.get('category') == c %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-2 col-sm-6">
+      <label class="form-label small fw-semibold text-secondary">Type</label>
+      <select class="form-select form-select-sm" name="kind">
+        <option value="">All Types</option>
+        <option value="expense" {% if request.args.get('kind') == 'expense' %}selected{% endif %}>Expense</option>
+        <option value="income" {% if request.args.get('kind') == 'income' %}selected{% endif %}>Income</option>
+      </select>
+    </div>
+
+    <div class="col-md-2 col-sm-6">
+      <label class="form-label small fw-semibold text-secondary">From Date</label>
+      <input type="date" class="form-control form-control-sm" name="start" value="{{ request.args.get('start', '') }}">
+    </div>
+
+    <div class="col-md-2 col-sm-6">
+      <label class="form-label small fw-semibold text-secondary">To Date</label>
+      <input type="date" class="form-control form-control-sm" name="end" value="{{ request.args.get('end', '') }}">
+    </div>
+
+    <div class="col-md-3 col-sm-12">
+      <div class="form-check mb-2">
+        <input class="form-check-input" type="checkbox" name="anomalies_only" value="1" id="anomCheck" {% if request.args.get('anomalies_only') == '1' %}checked{% endif %}>
+        <label class="form-check-label small fw-semibold text-danger" for="anomCheck">
+          <i class="bi bi-exclamation-triangle-fill me-1"></i> Anomalies & Spikes Only
+        </label>
+      </div>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-primary rounded-pill px-3 flex-grow-1" type="submit">
+          <i class="bi bi-funnel me-1"></i> Apply
+        </button>
+        <a class="btn btn-sm btn-outline-secondary rounded-pill px-3" href="{{ url_for('transactions') }}">Reset</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+<!-- Filter Summary Strip -->
+<div class="d-flex flex-wrap gap-3 align-items-center mb-3 text-secondary small">
+  <div>Total Filtered Records: <strong class="text-dark">{{ transactions|length }}</strong></div>
+  <div>&bull;</div>
+  <div>Expenses: <strong class="text-danger">{{ active_currency }}{{ "%.2f"|format(total_filtered) }}</strong></div>
+  <div>&bull;</div>
+  <div>Income: <strong class="text-success">{{ active_currency }}{{ "%.2f"|format(total_income_filtered) }}</strong></div>
+</div>
+
+<!-- Transactions Table -->
+<div class="panel shadow-sm">
+  {% if transactions %}
+    <div class="table-responsive">
+      <table class="table align-middle table-hover">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Description & Payment</th>
+            <th>Category</th>
+            <th>AI Model Suggestion</th>
+            <th>Status / Anomaly</th>
+            <th class="text-end">Amount</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in transactions %}
+            <tr>
+              <td class="text-secondary small text-nowrap">{{ t.tx_date.strftime("%d %b %Y") }}</td>
+              <td>
+                <div class="fw-semibold text-dark">{{ t.description }}</div>
+                <div class="small text-secondary">
+                  <span class="badge bg-light text-dark border">{{ t.kind|title }}</span>
+                  <span class="ms-1">{{ t.payment_method }}</span>
+                  {% if t.notes %}&bull; <span class="fst-italic">{{ t.notes }}</span>{% endif %}
+                </div>
+              </td>
+              <td>
+                <span class="category-tag">{{ t.category }}</span>
+              </td>
+              <td>
+                <div class="d-flex align-items-center gap-1">
+                  <i class="bi bi-robot text-primary"></i>
+                  <span class="small fw-semibold">{{ t.ai_category }}</span>
+                  <span class="text-muted" style="font-size: 0.72rem;">({{ "%.0f"|format(t.ai_confidence * 100) }}%)</span>
+                </div>
+              </td>
+              <td>
+                {% if t.is_anomaly %}
+                  <span class="anomaly-tag" data-bs-toggle="tooltip" data-bs-placement="top" title="{{ t.anomaly_reason }}">
+                    <i class="bi bi-exclamation-triangle-fill"></i> Anomaly Spike
+                  </span>
+                {% else %}
+                  <span class="badge bg-light text-success border"><i class="bi bi-check2"></i> Normal</span>
+                {% endif %}
+              </td>
+              <td class="text-end fw-bold {% if t.kind == 'income' %}text-success{% else %}text-dark{% endif %} text-nowrap">
+                {% if t.kind == 'income' %}+{% else %}−{% endif %}{{ active_currency }}{{ "%.2f"|format(t.amount) }}
+              </td>
+              <td class="text-end text-nowrap">
+                <a href="{{ url_for('edit_transaction', tx_id=t.id) }}" class="btn btn-sm btn-light border py-1 px-2" title="Edit">
+                  <i class="bi bi-pencil"></i>
+                </a>
+                <form method="post" action="{{ url_for('delete_transaction', tx_id=t.id) }}" class="d-inline" onsubmit="return confirm('Permanently delete this transaction?')">
+                  <button class="btn btn-sm btn-light border text-danger py-1 px-2" type="submit" title="Delete">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <i class="bi bi-search text-muted fs-1 mb-2 d-block"></i>
+      <h5>No transactions found</h5>
+      <p class="text-secondary small mb-3">No records match the current filter criteria.</p>
+      <a class="btn btn-primary btn-sm rounded-pill px-3" href="{{ url_for('transactions') }}">Reset Filters</a>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Initialize Bootstrap Tooltips
+  const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+  tooltipTriggerList.map(function (tooltipTriggerEl) {
+    return new bootstrap.Tooltip(tooltipTriggerEl);
+  });
+</script>
+{% endblock %}

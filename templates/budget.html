@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Monthly Budget & Category Limits · SpendSense AI{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <span class="eyebrow">BUDGET DISCIPLINE</span>
+    <h1 class="h2 fw-bold mt-1 mb-0">Monthly Budget & Category Limits</h1>
+    <p class="text-secondary small mb-0">Set spending caps, monitor burndown rates, and receive AI alerts before overspending</p>
+  </div>
+  
+  <!-- Month Selector Form -->
+  <form method="get" class="d-flex align-items-center gap-2">
+    <label class="small text-secondary fw-semibold">Month:</label>
+    <input type="month" name="month" class="form-control form-control-sm" value="{{ month }}" onchange="this.form.submit()">
+  </form>
+</div>
+
+<div class="row g-4 mb-4">
+  <!-- Left: Overall Budget Status Card -->
+  <div class="col-lg-5">
+    <div class="panel h-100 shadow-sm">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-bold mb-0">Budget Status ({{ month }})</h5>
+        <span class="pill-soft {% if budget and spent > budget.amount %}pill-soft-warning{% else %}pill-soft-mint{% endif %}">
+          {% if budget and spent > budget.amount %}Over Limit{% elif budget %}On Track{% else %}Unset{% endif %}
+        </span>
+      </div>
+
+      {% if budget %}
+        <div class="my-3">
+          <div class="display-6 fw-bold text-dark">{{ active_currency }}{{ "%.2f"|format(spent) }}</div>
+          <div class="text-secondary small">spent of <strong>{{ active_currency }}{{ "%.2f"|format(budget.amount) }}</strong> allocated budget</div>
+        </div>
+
+        {% set pct = (spent / budget.amount * 100)|round %}
+        <div class="progress my-3" style="height: 12px; border-radius: 99px;">
+          <div class="progress-bar {% if spent > budget.amount %}bg-danger{% elif pct > 80 %}bg-warning{% else %}bg-primary{% endif %}" 
+               style="width: {{ [pct, 100]|min }}%;"></div>
+        </div>
+
+        <div class="p-3 rounded-3 mb-3" style="background:#f8fafc; border:1px solid #e2e8f0;">
+          {% if spent > budget.amount %}
+            <div class="text-danger fw-bold"><i class="bi bi-exclamation-octagon-fill me-1"></i> Over budget by {{ active_currency }}{{ "%.2f"|format(spent - budget.amount) }}</div>
+            <small class="text-secondary">Discretionary expenses have exceeded your planned allowance.</small>
+          {% else %}
+            <div class="text-success fw-bold"><i class="bi bi-shield-check me-1"></i> {{ active_currency }}{{ "%.2f"|format(budget.amount - spent) }} Remaining</div>
+            <small class="text-secondary">{{ pct }}% consumed so far this month.</small>
+          {% endif %}
+        </div>
+      {% else %}
+        <div class="empty-state my-3">
+          <i class="bi bi-bullseye text-muted fs-1 mb-2 d-block"></i>
+          <p class="mb-0">No budget configured for <strong>{{ month }}</strong>.<br>Enter target values on the right to start tracking.</p>
+        </div>
+      {% endif %}
+
+      <div class="p-3 rounded-3 mt-auto" style="background: #eef2ff;">
+        <h6 class="fw-bold text-primary mb-1"><i class="bi bi-lightbulb-fill me-1"></i> AI Recommendation</h6>
+        <p class="small text-secondary mb-0">
+          The 50/30/20 standard recommends keeping essential needs below 50% and setting aside 20% right on payday.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Budget & Limits Form -->
+  <div class="col-lg-7">
+    <div class="panel shadow-sm">
+      <h5 class="fw-bold mb-3"><i class="bi bi-sliders text-primary me-2"></i>Configure Budget & Category Caps</h5>
+      
+      <form method="post">
+        <input type="hidden" name="month" value="{{ month }}">
+
+        <!-- Overall Budget Amount -->
+        <div class="mb-4">
+          <label class="form-label fw-semibold">Overall Monthly Budget ({{ active_currency }})</label>
+          <div class="input-group">
+            <span class="input-group-text bg-light fw-bold">{{ active_currency }}</span>
+            <input type="number" step="0.01" min="1" class="form-control form-control-lg fw-bold" name="amount" 
+                   value="{{ budget.amount if budget else '' }}" placeholder="e.g. 45000" required>
+          </div>
+          <small class="text-secondary">Maximum total expense cap across all categories for {{ month }}</small>
+        </div>
+
+        <h6 class="fw-bold text-secondary mb-3">Category-Specific Spending Caps (Optional)</h6>
+        
+        <div class="row g-3">
+          {% for cat in CATEGORIES %}
+            {% if cat != 'Income' %}
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold text-secondary mb-1">{{ cat }} Cap ({{ active_currency }})</label>
+                <div class="input-group input-group-sm">
+                  <span class="input-group-text">{{ active_currency }}</span>
+                  <input type="number" step="1" min="0" class="form-control" name="limit_{{ cat }}" 
+                         value="{{ category_limits.get(cat, '') }}" placeholder="No limit">
+                </div>
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+
+        <button class="btn btn-primary rounded-pill px-4 py-2 mt-4 fw-semibold" type="submit">
+          <i class="bi bi-check2-circle me-1"></i> Save Budget & Limits
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Category-Wise Burndown Progress Cards -->
+<div class="panel shadow-sm">
+  <h5 class="fw-bold mb-3"><i class="bi bi-bar-chart-steps text-info me-2"></i>Category Spending Breakdown vs Limits</h5>
+  
+  <div class="row g-3">
+    {% for cat in CATEGORIES %}
+      {% if cat != 'Income' %}
+        {% set c_spent = cat_spent.get(cat, 0.0) %}
+        {% set c_limit = category_limits.get(cat, 0.0)|float %}
+        
+        <div class="col-md-4 col-sm-6">
+          <div class="p-3 rounded-3 border h-100" style="background:#fff;">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <strong class="text-dark">{{ cat }}</strong>
+              {% if c_limit > 0 %}
+                {% if c_spent > c_limit %}
+                  <span class="badge bg-danger">Over Cap</span>
+                {% else %}
+                  <span class="badge bg-success">Within Cap</span>
+                {% endif %}
+              {% endif %}
+            </div>
+
+            <div class="small text-secondary mb-2">
+              Spent: <strong class="text-dark">{{ active_currency }}{{ "%.2f"|format(c_spent) }}</strong>
+              {% if c_limit > 0 %}
+                / {{ active_currency }}{{ "%.0f"|format(c_limit) }}
+              {% endif %}
+            </div>
+
+            {% if c_limit > 0 %}
+              {% set cat_pct = (c_spent / c_limit * 100)|round %}
+              <div class="progress" style="height: 6px;">
+                <div class="progress-bar {% if c_spent > c_limit %}bg-danger{% else %}bg-primary{% endif %}" 
+                     style="width: {{ [cat_pct, 100]|min }}%;"></div>
+              </div>
+              <div class="d-flex justify-content-between small text-muted mt-1" style="font-size:0.75rem;">
+                <span>{{ cat_pct }}% used</span>
+                <span>{{ active_currency }}{{ "%.0f"|format(c_limit - c_spent) if c_spent <= c_limit else 0 }} left</span>
+              </div>
+            {% else %}
+              <div class="progress" style="height: 4px; background:#f1f5f9;">
+                <div class="progress-bar bg-secondary opacity-50" style="width: 100%;"></div>
+              </div>
+              <small class="text-muted d-block mt-1" style="font-size:0.75rem;">No category limit specified</small>
+            {% endif %}
+          </div>
+        </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

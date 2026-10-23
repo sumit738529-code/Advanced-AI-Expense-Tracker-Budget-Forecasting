@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Import Transactions via CSV · SpendSense AI{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center py-4">
+  <div class="col-lg-8">
+    <div class="panel shadow-sm">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <span class="eyebrow">DATA INGESTION</span>
+          <h2 class="h3 fw-bold mt-1 mb-0">Bulk Import Transactions</h2>
+        </div>
+        <a class="btn btn-outline-secondary btn-sm rounded-pill px-3" href="{{ url_for('transactions') }}">
+          <i class="bi bi-arrow-left me-1"></i> Back to Ledger
+        </a>
+      </div>
+      <p class="text-secondary small mb-4">
+        Upload bank export CSVs or personal expense spreadsheets. SpendSense AI automatically scans descriptions, applies TF-IDF categorization, and checks for statistical anomalies.
+      </p>
+
+      <form method="post" enctype="multipart/form-data">
+        <div class="mb-4 p-4 text-center rounded-3 border border-2 border-dashed" style="background:#f8fafc; border-color:#cbd5e1 !important;">
+          <i class="bi bi-file-earmark-spreadsheet text-success display-4 mb-2 d-block"></i>
+          <label class="form-label fw-semibold text-dark mb-1">Choose CSV File to Upload</label>
+          <p class="text-secondary small mb-3">File format must be <code>.csv</code> with utf-8 encoding</p>
+          <input type="file" class="form-control" name="file" accept=".csv,text/csv" required>
+        </div>
+
+        <div class="d-flex align-items-center justify-content-between">
+          <button class="btn btn-primary rounded-pill px-4 py-2 fw-semibold" type="submit">
+            <i class="bi bi-cloud-arrow-up me-1"></i> Start Bulk Import & AI Tagging
+          </button>
+          <a class="btn btn-outline-secondary btn-sm rounded-pill px-3" 
+             href="data:text/csv;charset=utf-8,date,description,amount,type,category%0A2026-10-01,Monthly salary direct payroll,75000,income,Income%0A2026-10-02,Swiggy food delivery,650,expense,Food%0A2026-10-03,Uber ride to airport,420,expense,Transport%0A2026-10-04,Bescom electricity bill,1750,expense,Utilities%0A2026-10-05,Amazon headphones,2499,expense,Shopping" 
+             download="spendsense_sample_import.csv">
+            <i class="bi bi-download me-1"></i> Download Sample CSV Template
+          </a>
+        </div>
+      </form>
+
+      <hr class="my-4">
+
+      <h6 class="fw-bold text-dark mb-2">CSV Schema Guidelines</h6>
+      <div class="table-responsive">
+        <table class="table table-sm small align-middle">
+          <thead>
+            <tr>
+              <th>Column Name</th>
+              <th>Status</th>
+              <th>Accepted Values / Format</th>
+              <th>Example</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>date</code></td>
+              <td><span class="badge bg-danger">Required</span></td>
+              <td><code>YYYY-MM-DD</code></td>
+              <td><code>2026-10-15</code></td>
+            </tr>
+            <tr>
+              <td><code>description</code></td>
+              <td><span class="badge bg-danger">Required</span></td>
+              <td>Any transaction text or merchant name</td>
+              <td><code>Starbucks cold brew</code></td>
+            </tr>
+            <tr>
+              <td><code>amount</code></td>
+              <td><span class="badge bg-danger">Required</span></td>
+              <td>Positive decimal numbers</td>
+              <td><code>450.00</code></td>
+            </tr>
+            <tr>
+              <td><code>type</code></td>
+              <td><span class="badge bg-secondary">Optional</span></td>
+              <td><code>expense</code> or <code>income</code> (defaults to expense)</td>
+              <td><code>expense</code></td>
+            </tr>
+            <tr>
+              <td><code>category</code></td>
+              <td><span class="badge bg-secondary">Optional</span></td>
+              <td>Leave empty to let AI categorize automatically!</td>
+              <td><code>Food</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Sign in · SpendSense AI{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center py-4">
+  <div class="col-md-6 col-lg-5">
+    <div class="panel shadow-sm">
+      <div class="text-center mb-4">
+        <span class="eyebrow">SPENDSENSE AI AUTHENTICATION</span>
+        <h2 class="fw-bold mt-1 mb-1">Welcome Back</h2>
+        <p class="text-secondary small">Access your personalized financial intelligence dashboard</p>
+      </div>
+
+      <!-- 1-Click Viva Demo Banner -->
+      <div class="p-3 rounded-3 mb-4 text-center" style="background:#fffbeb; border:1px solid #fde68a;">
+        <div class="fw-bold text-dark small mb-1"><i class="bi bi-stars text-warning me-1"></i> Viva Examiner / Professor Quick Access</div>
+        <p class="text-secondary small mb-2" style="font-size:0.78rem;">
+          One-click evaluation mode pre-loaded with 6 months of historical AI analyzed transactions.
+        </p>
+        <a href="{{ url_for('demo_login') }}" class="btn btn-warning btn-sm w-100 fw-bold rounded-pill text-dark shadow-sm">
+          <i class="bi bi-box-arrow-in-right me-1"></i> Launch 1-Click Viva Demo Account
+        </a>
+      </div>
+
+      <div class="text-center my-3 text-secondary position-relative">
+        <hr class="my-0">
+        <span class="bg-white px-3 position-relative" style="top: -10px; font-size: 0.82rem; font-weight: 600;">OR SIGN IN WITH EMAIL</span>
+      </div>
+
+      <form method="post">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold text-secondary">Email Address</label>
+          <input type="email" class="form-control" name="email" placeholder="you@university.edu" required autocomplete="email">
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label small fw-semibold text-secondary">Password</label>
+          <input type="password" class="form-control" name="password" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+
+        <button class="btn btn-primary w-100 rounded-pill py-2 fw-semibold" type="submit">
+          Sign In
+        </button>
+      </form>
+
+      <div class="text-center mt-4 small text-secondary">
+        Don't have an account yet? <a href="{{ url_for('register') }}" class="text-primary fw-semibold text-decoration-none">Create Account</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

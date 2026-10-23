@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: spendsense-ai
+    runtime: python
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: gunicorn app:app --log-file -
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.6
+      - key: SECRET_KEY
+        generateValue: true
+      - key: FLASK_DEBUG
+        value: "0"
+      - key: GEMINI_API_KEY
+        sync: false

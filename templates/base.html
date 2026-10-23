@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}SpendSense AI — Intelligent Financial Management{% endblock %}</title>
+  
+  <!-- Fonts & Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  
+  <!-- Bootstrap 5 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+  {% block head %}{% endblock %}
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark app-nav sticky-top">
+  <div class="container-fluid px-lg-4">
+    <a class="navbar-brand d-flex align-items-center" href="{{ url_for('index') }}">
+      <span class="sparkle">✦</span> SpendSense<span style="color:#38bdf8;">.AI</span>
+    </a>
+    
+    <button class="navbar-toggler border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navBarContent">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+
+    <div class="collapse navbar-collapse" id="navBarContent">
+      <div class="navbar-nav me-auto mb-2 mb-lg-0 ms-lg-3">
+        {% if session.get('user_id') %}
+          <a class="nav-link" href="{{ url_for('dashboard') }}"><i class="bi bi-grid-1x2-fill me-1"></i> Dashboard</a>
+          <a class="nav-link" href="{{ url_for('transactions') }}"><i class="bi bi-receipt-cutoff me-1"></i> Transactions</a>
+          <a class="nav-link" href="{{ url_for('receipt_scanner') }}"><i class="bi bi-camera me-1"></i> Smart Receipt OCR</a>
+          <a class="nav-link" href="{{ url_for('budget') }}"><i class="bi bi-pie-chart-fill me-1"></i> Budget</a>
+          <a class="nav-link" href="{{ url_for('goals') }}"><i class="bi bi-flag-fill me-1"></i> Goals</a>
+          <a class="nav-link" href="{{ url_for('subscriptions') }}"><i class="bi bi-arrow-repeat me-1"></i> Subscriptions</a>
+          <a class="nav-link" href="{{ url_for('viva_lab') }}"><i class="bi bi-cpu-fill me-1"></i> AI Model Lab <span class="badge-lab">Viva</span></a>
+        {% endif %}
+      </div>
+
+      <div class="navbar-nav ms-auto align-items-lg-center gap-2">
+        {% if session.get('user_id') %}
+          <div class="dropdown">
+            <button class="btn btn-sm btn-outline-light dropdown-toggle rounded-pill px-3" type="button" data-bs-toggle="dropdown">
+              <i class="bi bi-download me-1"></i> Export Reports
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end shadow">
+              <li><a class="dropdown-item" href="{{ url_for('export_pdf') }}"><i class="bi bi-file-earmark-pdf text-danger me-2"></i> Monthly Statement (PDF)</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('export_csv') }}"><i class="bi bi-filetype-csv text-success me-2"></i> All Transactions (CSV)</a></li>
+              <li><hr class="dropdown-divider"></li>
+              <li><a class="dropdown-item" href="{{ url_for('import_csv') }}"><i class="bi bi-upload text-primary me-2"></i> Import CSV Data</a></li>
+            </ul>
+          </div>
+
+          <div class="dropdown">
+            <button class="btn btn-sm btn-secondary dropdown-toggle rounded-pill px-3" type="button" data-bs-toggle="dropdown">
+              <i class="bi bi-person-circle me-1"></i> {{ current_user_obj.name.split(' ')[0] if current_user_obj else 'Account' }}
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end shadow">
+              <li><a class="dropdown-item" href="{{ url_for('settings') }}"><i class="bi bi-gear me-2"></i> Settings & Currency</a></li>
+              <li><hr class="dropdown-divider"></li>
+              <li><a class="dropdown-item text-danger" href="{{ url_for('logout') }}"><i class="bi bi-box-arrow-right me-2"></i> Sign Out</a></li>
+            </ul>
+          </div>
+        {% else %}
+          <a class="btn btn-sm btn-outline-light rounded-pill px-3" href="{{ url_for('login') }}">Sign In</a>
+          <a class="btn btn-sm btn-primary rounded-pill px-3" href="{{ url_for('register') }}">Create Account</a>
+          <a class="btn btn-sm btn-warning text-dark fw-bold rounded-pill px-3" href="{{ url_for('demo_login') }}">
+            <i class="bi bi-stars me-1"></i> Viva Demo Login
+          </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</nav>
+
+<main class="container-fluid px-lg-4 py-4 flex-grow-1">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show shadow-sm" role="alert">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+</main>
+
+{% if session.get('user_id') %}
+<!-- Floating AI Financial Copilot -->
+<button class="copilot-toggle-btn" id="copilotBtn" title="Ask SpendSense AI Copilot">
+  <i class="bi bi-robot"></i>
+</button>
+
+<div class="copilot-box" id="copilotBox">
+  <div class="copilot-header">
+    <div class="d-flex align-items-center gap-2">
+      <i class="bi bi-robot text-info fs-5"></i>
+      <div>
+        <h6 class="mb-0 fw-bold">SpendSense Copilot</h6>
+        <small class="text-secondary" style="font-size:0.75rem;">AI Financial Advisor</small>
+      </div>
+    </div>
+    <button class="btn btn-sm text-white" id="closeCopilotBtn"><i class="bi bi-x-lg"></i></button>
+  </div>
+  <div class="copilot-chat" id="copilotChat">
+    <div class="chat-msg chat-bot">
+      👋 Hello {{ current_user_obj.name.split(' ')[0] if current_user_obj else 'there' }}! I am your AI Financial Copilot. Ask me about your health score, spending trends, next month's forecast, or tips to cut expenses!
+    </div>
+  </div>
+  <form class="copilot-input-area" id="copilotForm">
+    <input type="text" id="copilotInput" class="form-control form-control-sm" placeholder="Ask financial question..." required>
+    <button class="btn btn-primary btn-sm px-3" type="submit"><i class="bi bi-send"></i></button>
+  </form>
+</div>
+{% endif %}
+
+<footer class="text-center small">
+  <div class="container">
+    <p class="mb-1 fw-semibold text-dark">✦ SpendSense AI — Autonomous Expense Categorization & Time-Series Budget Forecasting</p>
+    <p class="mb-0 text-secondary">
+      MSc / Final Year Computer Applications Project &bull; Machine Learning Engine &bull; Scikit-Learn TF-IDF NLP &bull; Multi-Model Forecast &bull; Production Ready for Cloud Deployment
+    </p>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+{% if session.get('user_id') %}
+<script>
+  // AI Copilot Chat script
+  const copilotBtn = document.getElementById('copilotBtn');
+  const copilotBox = document.getElementById('copilotBox');
+  const closeCopilotBtn = document.getElementById('closeCopilotBtn');
+  const copilotForm = document.getElementById('copilotForm');
+  const copilotInput = document.getElementById('copilotInput');
+  const copilotChat = document.getElementById('copilotChat');
+
+  if (copilotBtn) {
+    copilotBtn.addEventListener('click', () => {
+      copilotBox.style.display = copilotBox.style.display === 'flex' ? 'none' : 'flex';
+      if (copilotBox.style.display === 'flex') copilotInput.focus();
+    });
+    closeCopilotBtn.addEventListener('click', () => {
+      copilotBox.style.display = 'none';
+    });
+    copilotForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = copilotInput.value.trim();
+      if (!msg) return;
+
+      // Add user message
+      const userDiv = document.createElement('div');
+      userDiv.className = 'chat-msg chat-user';
+      userDiv.innerText = msg;
+      copilotChat.appendChild(userDiv);
+      copilotInput.value = '';
+      copilotChat.scrollTop = copilotChat.scrollHeight;
+
+      // Loading indicator
+      const botDiv = document.createElement('div');
+      botDiv.className = 'chat-msg chat-bot';
+      botDiv.innerText = 'Analyzing your financial data...';
+      copilotChat.appendChild(botDiv);
+      copilotChat.scrollTop = copilotChat.scrollHeight;
+
+      try {
+        const res = await fetch('{{ url_for("api_copilot") }}', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({message: msg})
+        });
+        const data = await res.json();
+        botDiv.innerText = data.reply;
+      } catch (err) {
+        botDiv.innerText = "Couldn't reach AI advisor right now. Please try again.";
+      }
+      copilotChat.scrollTop = copilotChat.scrollHeight;
+    });
+  }
+</script>
+{% endif %}
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

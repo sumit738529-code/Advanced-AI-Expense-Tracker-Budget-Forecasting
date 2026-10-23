@@ -1,14 +1,14 @@
-"""SpendSense AI Engine — Machine Learning & Intelligent Financial Services
+"""SpendSense AI Engine — Machine Learning & Intelligent Financial Services.
 
+Backed by MongoDB database collections.
 Features:
 1. TF-IDF + Multinomial Naive Bayes NLP Categorizer with Explainability & Confidence.
-2. Academic Model Evaluation (Accuracy, Precision, Recall, F1, Confusion Matrix).
-3. Statistical & IQR-based Outlier / Anomaly / Fraudulent Expense Detection.
-4. Multi-Model Forecasting (Linear Trend, Double Exponential Smoothing, Moving Average, Ensemble).
-5. Smart Receipt & Bill OCR / Heuristic Document Parser.
-6. 50/30/20 Financial Health Score (0-100) & Budget Advisory.
-7. Recurring Subscription & Bill Pattern Recognition.
-8. Context-Aware AI Financial Copilot (Rule-based + Optional Gemini/OpenAI API).
+2. Statistical & IQR-based Outlier / Anomaly / Fraudulent Expense Detection.
+3. Multi-Model Forecasting (Linear Trend, Double Exponential Smoothing, Moving Average, Ensemble).
+4. Smart Receipt & Bill OCR / Document Parser.
+5. 50/30/20 Financial Health Score (0-100) & Budget Advisory.
+6. Recurring Subscription & Bill Pattern Recognition.
+7. Context-Aware AI Financial Copilot (Rule-based + Optional Gemini/OpenAI API).
 """
 
 import os
@@ -25,8 +25,7 @@ from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 
-from models import db, Transaction, Budget, Subscription, SavingsGoal
-from sqlalchemy import extract, func
+from db_mongo import get_db, TransactionDoc, BudgetDoc, SubscriptionDoc
 
 CATEGORIES = [
     "Food",
@@ -43,7 +42,7 @@ CATEGORIES = [
 ]
 
 # ---------------------------------------------------------
-# 1. Comprehensive Academic Training Dataset (500+ examples)
+# 1. Training Dataset
 # ---------------------------------------------------------
 RAW_TRAINING_DATA = [
     # Food
@@ -67,6 +66,7 @@ RAW_TRAINING_DATA = [
 
     # Transport
     ("uber cab ride to office airport", "Transport"),
+    ("uber taxi trip cab commute", "Transport"),
     ("ola auto ride commute railway station", "Transport"),
     ("petrol fuel refill shell petrol bunk", "Transport"),
     ("diesel fuel tank refill car", "Transport"),
@@ -104,7 +104,7 @@ RAW_TRAINING_DATA = [
     ("garbage disposal sanitation municipal tax payment", "Utilities"),
 
     # Healthcare
-    ("doctor consultation fee clinic general physician", "Utilities" if False else "Healthcare"),
+    ("doctor consultation fee clinic general physician", "Healthcare"),
     ("apollo pharmacy medicine purchase prescription tablets", "Healthcare"),
     ("medical diagnostic lab blood test thyroid test scan", "Healthcare"),
     ("dental clinic tooth cleaning cavity filling braces", "Healthcare"),
@@ -222,7 +222,6 @@ class ExpenseClassifier:
         classes = self.pipeline.classes_
         dist = {c: round(float(p), 4) for c, p in zip(classes, probs)}
         
-        # Ensure all standard categories exist in distribution
         for c in CATEGORIES:
             if c not in dist:
                 dist[c] = 0.0
@@ -230,9 +229,7 @@ class ExpenseClassifier:
         best_cat = max(dist, key=dist.get)
         confidence = dist[best_cat]
 
-        # Extract explainability tokens (words in text that belong to TF-IDF vocab)
         vectorizer = self.pipeline.named_steps["tfidf"]
-        feature_names = vectorizer.get_feature_names_out()
         words = cleaned.split()
         top_tokens = [w for w in words if w in vectorizer.vocabulary_]
 
@@ -244,34 +241,15 @@ class ExpenseClassifier:
         }
 
     def evaluate_model(self):
-        """Calculates evaluation metrics and confusion matrix for viva defense."""
         texts = [x[0] for x in RAW_TRAINING_DATA]
         y_true = [x[1] for x in RAW_TRAINING_DATA]
-        
-        # Cross-validation simulation / in-sample evaluation with detailed class report
         y_pred = self.pipeline.predict(texts)
         acc = float(accuracy_score(y_true, y_pred))
         precision, recall, f1, _ = precision_recall_fscore_support(
             y_true, y_pred, average="macro", zero_division=0
         )
-        
         labels = sorted(list(set(y_true)))
         cm = confusion_matrix(y_true, y_pred, labels=labels).tolist()
-
-        # Per-class metrics
-        p_class, r_class, f_class, support = precision_recall_fscore_support(
-            y_true, y_pred, labels=labels, zero_division=0
-        )
-        class_metrics = []
-        for i, lab in enumerate(labels):
-            class_metrics.append({
-                "category": lab,
-                "precision": round(float(p_class[i]), 2),
-                "recall": round(float(r_class[i]), 2),
-                "f1_score": round(float(f_class[i]), 2),
-                "sample_count": int(support[i])
-            })
-
         return {
             "accuracy": round(acc * 100, 2),
             "macro_precision": round(float(precision) * 100, 2),
@@ -279,11 +257,9 @@ class ExpenseClassifier:
             "macro_f1": round(float(f1) * 100, 2),
             "labels": labels,
             "confusion_matrix": cm,
-            "class_metrics": class_metrics,
             "total_samples": len(texts)
         }
 
-# Global trained classifier instance
 classifier = ExpenseClassifier()
 
 def categorize_expense(description):
@@ -293,35 +269,44 @@ def get_model_evaluation():
     return classifier.evaluate_model()
 
 # ---------------------------------------------------------
-# 3. Anomaly & Unusual Spending Detection (IQR & Z-Score)
+# 3. Anomaly & Unusual Spending Detection (MongoDB backed)
 # ---------------------------------------------------------
 def detect_transaction_anomaly(user_id, amount, category, tx_date=None, description=""):
     """Evaluates whether an individual expense is an unusual outlier, spike, or duplicate."""
     if amount <= 0:
         return False, None
 
-    # Fetch past 90 days expenses in this category
-    cutoff = date.today() - timedelta(days=90)
-    history = Transaction.query.filter(
-        Transaction.user_id == user_id,
-        Transaction.kind == "expense",
-        Transaction.category == category,
-        Transaction.tx_date >= cutoff
-    ).all()
+    db = get_db()
+    cutoff_date = (date.today() - timedelta(days=90)).isoformat()
+    
+    # Query MongoDB for past 90 days expenses in this category
+    cursor = db.transactions.find({
+        "user_id": str(user_id),
+        "kind": "expense",
+        "category": category,
+        "tx_date": {"$gte": cutoff_date}
+    })
+    history = list(cursor)
 
-    # Rule 1: Check for duplicate transaction (same amount & category within 24-48 hours)
+    # Rule 1: Check for duplicate transaction
     if tx_date:
+        tx_d_str = tx_date.isoformat() if isinstance(tx_date, date) else str(tx_date)[:10]
         for past_tx in history:
-            if abs((past_tx.tx_date - tx_date).days) <= 1 and abs(past_tx.amount - amount) < 0.01:
-                return True, f"Potential duplicate: identical amount ₹{amount:.2f} logged within 48h ({past_tx.description})"
+            p_d_str = str(past_tx.get("tx_date"))[:10]
+            try:
+                d1 = datetime.strptime(p_d_str, "%Y-%m-%d").date()
+                d2 = datetime.strptime(tx_d_str, "%Y-%m-%d").date()
+                if abs((d1 - d2).days) <= 1 and abs(float(past_tx.get("amount", 0.0)) - amount) < 0.01:
+                    return True, f"Potential duplicate: identical amount logged within 48h ({past_tx.get('description', '')})"
+            except Exception:
+                pass
 
     if len(history) < 4:
-        # Not enough history to construct statistical distribution
         if amount > 15000:
-            return True, f"High-value transaction (₹{amount:.2f}) without established category baseline"
+            return True, f"High-value transaction without established category baseline"
         return False, None
 
-    amounts = [t.amount for t in history]
+    amounts = [float(t.get("amount", 0.0)) for t in history]
     median_val = float(np.median(amounts))
     q75, q25 = np.percentile(amounts, [75, 25])
     iqr = q75 - q25
@@ -333,63 +318,55 @@ def detect_transaction_anomaly(user_id, amount, category, tx_date=None, descript
 
     if amount > upper_threshold and z_score > 2.0:
         ratio = amount / median_val if median_val > 0 else 2.0
-        return True, f"Spending Spike: {ratio:.1f}x higher than your typical {category} expense (median: ₹{median_val:.0f})"
+        return True, f"Spending Spike: {ratio:.1f}x higher than typical {category} expense (median: ₹{median_val:.0f})"
 
     return False, None
 
-def audit_user_anomalies(user_id):
-    """Scans and tags anomalous transactions for user dashboard."""
-    txs = Transaction.query.filter_by(user_id=user_id, kind="expense").order_by(Transaction.tx_date.desc()).all()
-    updated = 0
-    for t in txs:
-        is_anom, reason = detect_transaction_anomaly(user_id, t.amount, t.category, t.tx_date, t.description)
-        if t.is_anomaly != is_anom or t.anomaly_reason != reason:
-            t.is_anomaly = is_anom
-            t.anomaly_reason = reason
-            updated += 1
-    if updated > 0:
-        db.session.commit()
-    return Transaction.query.filter_by(user_id=user_id, is_anomaly=True).order_by(Transaction.tx_date.desc()).all()
-
 # ---------------------------------------------------------
-# 4. Multi-Model Time Series Forecasting Engine
+# 4. Multi-Model Time Series Forecasting (MongoDB backed)
 # ---------------------------------------------------------
 def forecast_monthly_spend(user_id, months=6):
-    """Multi-model ensemble forecast: Linear OLS, Holt's Exponential Smoothing & Moving Average."""
+    """Ensemble forecast: Linear Trend, Holt's Exponential Smoothing & Moving Average."""
+    db = get_db()
     today = date.today()
     monthly = []
     year, month = today.year, today.month
 
-    # Gather last N months
     for offset in range(months - 1, -1, -1):
         idx = year * 12 + month - 1 - offset
         y, m0 = divmod(idx, 12)
         m = m0 + 1
-        total = db.session.query(func.coalesce(func.sum(Transaction.amount), 0.0)).filter(
-            Transaction.user_id == user_id,
-            Transaction.kind == "expense",
-            extract("year", Transaction.tx_date) == y,
-            extract("month", Transaction.tx_date) == m
-        ).scalar() or 0.0
-        monthly.append({"month": f"{y}-{m:02d}", "actual": round(float(total), 2)})
+        m_str = f"{y}-{m:02d}"
+        
+        # Match all dates starting with YYYY-MM
+        regex_pattern = f"^{m_str}"
+        txs = db.transactions.find({
+            "user_id": str(user_id),
+            "kind": "expense",
+            "tx_date": {"$regex": regex_pattern}
+        })
+        total = sum(float(t.get("amount", 0.0)) for t in txs)
+        monthly.append({"month": m_str, "actual": round(float(total), 2)})
 
     actuals = [x["actual"] for x in monthly]
     n = len(actuals)
     non_zeros = [v for v in actuals if v > 0]
 
-    # Defaults if no data
+    next_idx = today.year * 12 + today.month
+    ny, nm0 = divmod(next_idx, 12)
+    next_month_str = f"{ny}-{nm0+1:02d}"
+
     if not non_zeros:
-        next_idx = today.year * 12 + today.month
-        ny, nm0 = divmod(next_idx, 12)
         return {
             "history": monthly,
-            "next_month": f"{ny}-{nm0+1:02d}",
+            "next_month": next_month_str,
             "predicted_spend": 0.0,
             "lower_bound": 0.0,
             "upper_bound": 0.0,
-            "method": "Ensemble (Linear + Exponential Smoothing + Moving Avg)",
-            "models": {"linear": 0.0, "exponential": 0.0, "moving_avg": 0.0},
-            "mae": 0.0
+            "method": "Ensemble (Holt's Smoothing + Linear Trend)",
+            "models": {"linear": 0.0, "exponential_smoothing": 0.0, "weighted_moving_avg": 0.0},
+            "mae": 0.0,
+            "trend_direction": "stable"
         }
 
     # Model 1: Ordinary Least Squares (OLS) Linear Trend
@@ -417,20 +394,12 @@ def forecast_monthly_spend(user_id, months=6):
     norm_w = [w / sum(weights) for w in weights]
     ma_pred = sum(r * w for r, w in zip(recent, norm_w))
 
-    # Ensemble Weighted Average
     ensemble = (0.35 * linear_pred) + (0.45 * exp_pred) + (0.20 * ma_pred)
 
-    # Confidence Interval Bounds (+/- 15% or std dev of residual)
     std_residual = float(np.std(actuals)) if len(actuals) > 1 else ensemble * 0.15
-    lower_bound = max(0.0, ensemble - (1.28 * std_residual)) # ~80-90% confidence lower
+    lower_bound = max(0.0, ensemble - (1.28 * std_residual))
     upper_bound = ensemble + (1.28 * std_residual)
-
-    # Calculate historical Mean Absolute Error (MAE)
     mae = round(float(np.mean([abs(a - ybar) for a in actuals])), 2)
-
-    next_idx = today.year * 12 + today.month
-    ny, nm0 = divmod(next_idx, 12)
-    next_month_str = f"{ny}-{nm0+1:02d}"
 
     return {
         "history": monthly,
@@ -457,14 +426,12 @@ def parse_receipt_text(text):
     if not lines:
         return {"merchant": "Unknown Merchant", "amount": 0.0, "date": date.today().isoformat(), "category": "Shopping", "confidence": 0.0}
 
-    # Merchant extraction: usually first non-trivial line
     merchant = lines[0]
     for line in lines[:3]:
         if not re.search(r"\b(bill|tax|receipt|invoice|cash|gstin|welcome)\b", line, re.I) and len(line) > 3:
             merchant = line
             break
 
-    # Date extraction (DD/MM/YYYY, YYYY-MM-DD, DD-MM-YYYY, DD Month YYYY)
     extracted_date = date.today()
     date_match = re.search(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})|(\d{4}[/-]\d{1,2}[/-]\d{1,2})", text)
     if date_match:
@@ -476,7 +443,6 @@ def parse_receipt_text(text):
             except ValueError:
                 continue
 
-    # Amount extraction: search for patterns like Total, Grand Total, Net, Amount, Paid, Rs., INR, ₹
     amount = 0.0
     amount_patterns = [
         r"(?:grand\s*total|net\s*amount|total\s*due|amount\s*paid|total)[\s:=]*[₹\$\s]*(?:rs\.?)?\s*([0-9]+(?:[.,][0-9]{2})?)",
@@ -487,7 +453,6 @@ def parse_receipt_text(text):
     for pat in amount_patterns:
         matches = re.findall(pat, text, re.IGNORECASE)
         if matches:
-            # Pick highest reasonable value or last total
             candidates = []
             for m in matches:
                 try:
@@ -498,7 +463,6 @@ def parse_receipt_text(text):
                 amount = max(candidates)
                 break
 
-    # AI category prediction based on full receipt text
     cat_pred = categorize_expense(f"{merchant} {text[:200]}")
 
     return {
@@ -511,20 +475,14 @@ def parse_receipt_text(text):
     }
 
 def process_receipt_file(file_storage):
-    """Processes uploaded receipt image or text file with fallback OCR."""
     filename = file_storage.filename.lower()
-    
-    # Text file or CSV receipt
     if filename.endswith(".txt") or filename.endswith(".log"):
         text = file_storage.read().decode("utf-8", errors="ignore")
         return parse_receipt_text(text)
 
-    # Image file: Try pytesseract if available, else PIL heuristic / simulation
     try:
         from PIL import Image
         img = Image.open(file_storage.stream)
-        
-        # Check if pytesseract is usable
         text = ""
         try:
             import pytesseract
@@ -534,18 +492,15 @@ def process_receipt_file(file_storage):
 
         if text and len(text.strip()) > 10:
             return parse_receipt_text(text)
-        
-        # If tesseract unavailable on standard container, generate a smart structured receipt parse
-        # based on image metadata and filename
+
         base_name = os.path.splitext(os.path.basename(filename))[0].replace("_", " ").replace("-", " ")
         pred = categorize_expense(base_name)
         return {
             "merchant": base_name.title() if base_name else "Scanned Store Receipt",
-            "amount": 450.00, # default editable amount for review
+            "amount": 450.00,
             "date": date.today().isoformat(),
             "category": pred["category"],
             "confidence": pred["confidence"],
-            "ocr_notice": "OCR completed via Computer Vision Document Parser. You can edit before saving.",
             "raw_preview": f"Scanned file: {filename} ({img.size[0]}x{img.size[1]}px)"
         }
     except Exception as e:
@@ -559,47 +514,41 @@ def process_receipt_file(file_storage):
         }
 
 # ---------------------------------------------------------
-# 6. Financial Health Score (0 - 100) & 50/30/20 Rule
+# 6. Financial Health Score (0 - 100) (MongoDB backed)
 # ---------------------------------------------------------
 def calculate_financial_health(user_id):
-    """Calculates Financial Health Score (0-100), 50/30/20 breakdown, and grades."""
+    db = get_db()
     today = date.today()
-    month_start = today.replace(day=1)
+    curr_m_str = today.strftime("%Y-%m")
+    
+    # Query transactions for current month
+    txs = list(db.transactions.find({
+        "user_id": str(user_id),
+        "tx_date": {"$regex": f"^{curr_m_str}"}
+    }))
 
-    month_txs = Transaction.query.filter(
-        Transaction.user_id == user_id,
-        Transaction.tx_date >= month_start,
-        Transaction.tx_date <= today
-    ).all()
-
-    income = sum(t.amount for t in month_txs if t.kind == "income")
-    expenses = sum(t.amount for t in month_txs if t.kind == "expense")
+    income = sum(float(t.get("amount", 0.0)) for t in txs if t.get("kind") == "income")
+    expenses = sum(float(t.get("amount", 0.0)) for t in txs if t.get("kind") == "expense")
     net_savings = income - expenses
 
-    # Group into 50/30/20 buckets
-    # Needs: Housing, Utilities, Food, Healthcare
     needs_cats = {"Housing", "Utilities", "Food", "Healthcare"}
     wants_cats = {"Shopping", "Entertainment", "Travel"}
     
-    needs_spend = sum(t.amount for t in month_txs if t.kind == "expense" and t.category in needs_cats)
-    wants_spend = sum(t.amount for t in month_txs if t.kind == "expense" and t.category in wants_cats)
+    needs_spend = sum(float(t.get("amount", 0.0)) for t in txs if t.get("kind") == "expense" and t.get("category") in needs_cats)
+    wants_spend = sum(float(t.get("amount", 0.0)) for t in txs if t.get("kind") == "expense" and t.get("category") in wants_cats)
     other_spend = expenses - (needs_spend + wants_spend)
 
-    # Compute percentages relative to income (or total spend if income = 0)
     base_denom = income if income > 0 else (expenses if expenses > 0 else 1.0)
     needs_pct = (needs_spend / base_denom) * 100
     wants_pct = (wants_spend / base_denom) * 100
     savings_pct = (net_savings / base_denom) * 100 if income > 0 else 0.0
 
-    # Score calculation components:
-    # 1. Savings Rate Score (0-35 pts)
     savings_score = min(35.0, max(0.0, (savings_pct / 20.0) * 35.0))
 
-    # 2. Budget Discipline Score (0-35 pts)
-    curr_month_str = today.strftime("%Y-%m")
-    budget = Budget.query.filter_by(user_id=user_id, month=curr_month_str).first()
-    if budget and budget.amount > 0:
-        spend_ratio = expenses / budget.amount
+    budget_doc = db.budgets.find_one({"user_id": str(user_id), "month": curr_m_str})
+    if budget_doc and float(budget_doc.get("amount", 0.0)) > 0:
+        b_amt = float(budget_doc["amount"])
+        spend_ratio = expenses / b_amt
         if spend_ratio <= 0.8:
             budget_score = 35.0
         elif spend_ratio <= 1.0:
@@ -607,9 +556,8 @@ def calculate_financial_health(user_id):
         else:
             budget_score = max(5.0, 35.0 - ((spend_ratio - 1.0) * 40.0))
     else:
-        budget_score = 20.0 # moderate default if budget not configured yet
+        budget_score = 20.0
 
-    # 3. Needs vs Wants Control (0-20 pts)
     control_score = 20.0
     if needs_pct > 60:
         control_score -= 8.0
@@ -617,18 +565,16 @@ def calculate_financial_health(user_id):
         control_score -= 8.0
     control_score = max(5.0, control_score)
 
-    # 4. Anomaly & Volatility Penalty (0-10 pts)
-    anomalies = Transaction.query.filter(
-        Transaction.user_id == user_id,
-        Transaction.tx_date >= month_start,
-        Transaction.is_anomaly == True
-    ).count()
-    anomaly_score = max(0.0, 10.0 - (anomalies * 4.0))
+    anomalies_count = db.transactions.count_documents({
+        "user_id": str(user_id),
+        "tx_date": {"$regex": f"^{curr_m_str}"},
+        "is_anomaly": True
+    })
+    anomaly_score = max(0.0, 10.0 - (anomalies_count * 4.0))
 
     final_score = int(round(savings_score + budget_score + control_score + anomaly_score))
     final_score = max(10, min(100, final_score))
 
-    # Letter Grade
     if final_score >= 85:
         grade = "A+"
         status = "Excellent Financial Health"
@@ -650,9 +596,9 @@ def calculate_financial_health(user_id):
         tips.append("Your current savings rate is below the recommended 20% mark. Aim to trim discretionary 'Wants'.")
     if wants_pct > 30:
         tips.append(f"Discretionary spending ({wants_pct:.0f}%) is higher than the ideal 30% guideline.")
-    if budget and expenses > budget.amount:
-        tips.append(f"Spending exceeds this month's budget by ₹{expenses - budget.amount:.2f}.")
-    if not budget:
+    if budget_doc and expenses > float(budget_doc.get("amount", 0.0)):
+        tips.append(f"Spending exceeds this month's budget limit.")
+    if not budget_doc:
         tips.append("Set a monthly budget to unlock full budget discipline scoring.")
     if not tips:
         tips.append("Superb financial discipline! Keep maintaining this savings trajectory.")
@@ -674,7 +620,7 @@ def calculate_financial_health(user_id):
     }
 
 # ---------------------------------------------------------
-# 7. Recurring Subscription & Bill Pattern Recognition
+# 7. Recurring Subscriptions (MongoDB backed)
 # ---------------------------------------------------------
 KNOWN_SUBSCRIPTION_KEYWORDS = [
     ("netflix", "Netflix", 499.0, "Entertainment"),
@@ -691,133 +637,117 @@ KNOWN_SUBSCRIPTION_KEYWORDS = [
 ]
 
 def scan_and_sync_subscriptions(user_id):
-    """Scans past user transactions to auto-detect and populate recurring subscriptions."""
-    txs = Transaction.query.filter_by(user_id=user_id, kind="expense").all()
-    detected = []
-
+    db = get_db()
+    txs = list(db.transactions.find({"user_id": str(user_id), "kind": "expense"}))
+    
     for kw, name, default_amt, cat in KNOWN_SUBSCRIPTION_KEYWORDS:
-        matching = [t for t in txs if kw in t.description.lower()]
+        matching = [t for t in txs if kw in t.get("description", "").lower()]
         if matching:
-            # Check if already added in subscriptions table
-            existing = Subscription.query.filter_by(user_id=user_id, name=name).first()
-            latest = max(matching, key=lambda x: x.tx_date)
-            amt = latest.amount or default_amt
-            next_date = latest.tx_date + timedelta(days=30)
-            if next_date < date.today():
-                next_date = date.today() + timedelta(days=7)
+            existing = db.subscriptions.find_one({"user_id": str(user_id), "name": name})
+            latest = max(matching, key=lambda x: str(x.get("tx_date", "")))
+            amt = float(latest.get("amount") or default_amt)
+            
+            try:
+                latest_d = datetime.strptime(str(latest.get("tx_date"))[:10], "%Y-%m-%d").date()
+                next_date = (latest_d + timedelta(days=30)).isoformat()
+            except Exception:
+                next_date = (date.today() + timedelta(days=7)).isoformat()
 
             if not existing:
-                sub = Subscription(
-                    user_id=user_id,
-                    name=name,
-                    amount=amt,
-                    billing_cycle="monthly",
-                    next_due_date=next_date,
-                    category=cat,
-                    is_active=True
-                )
-                db.session.add(sub)
-                detected.append(name)
+                db.subscriptions.insert_one({
+                    "user_id": str(user_id),
+                    "name": name,
+                    "amount": amt,
+                    "billing_cycle": "monthly",
+                    "next_due_date": next_date,
+                    "category": cat,
+                    "is_active": True,
+                    "created_at": datetime.utcnow()
+                })
             else:
-                existing.amount = amt
-
-    if detected:
-        db.session.commit()
-    return Subscription.query.filter_by(user_id=user_id).all()
+                db.subscriptions.update_one(
+                    {"_id": existing["_id"]},
+                    {"$set": {"amount": amt}}
+                )
 
 # ---------------------------------------------------------
-# 8. AI Financial Copilot (Rule-based + Optional Gemini/OpenAI API)
+# 8. AI Financial Copilot (MongoDB backed)
 # ---------------------------------------------------------
 def chat_copilot(user_id, user_message):
-    """Context-aware AI financial assistant with intelligent rule engine + optional LLM API."""
-    user = db.session.get(Transaction, user_id)
+    db = get_db()
     today = date.today()
-    month_start = today.replace(day=1)
+    curr_m_str = today.strftime("%Y-%m")
     
-    # Financial snapshot
-    txs = Transaction.query.filter(
-        Transaction.user_id == user_id,
-        Transaction.tx_date >= month_start,
-        Transaction.tx_date <= today
-    ).all()
+    txs = list(db.transactions.find({
+        "user_id": str(user_id),
+        "tx_date": {"$regex": f"^{curr_m_str}"}
+    }))
     
-    expenses = sum(t.amount for t in txs if t.kind == "expense")
-    income = sum(t.amount for t in txs if t.kind == "income")
+    expenses = sum(float(t.get("amount", 0.0)) for t in txs if t.get("kind") == "expense")
+    income = sum(float(t.get("amount", 0.0)) for t in txs if t.get("kind") == "income")
     health = calculate_financial_health(user_id)
     forecast = forecast_monthly_spend(user_id)
-    budget = Budget.query.filter_by(user_id=user_id, month=today.strftime("%Y-%m")).first()
+    budget = db.budgets.find_one({"user_id": str(user_id), "month": curr_m_str})
 
-    # Category breakdown
     cat_totals = defaultdict(float)
     for t in txs:
-        if t.kind == "expense":
-            cat_totals[t.category] += t.amount
+        if t.get("kind") == "expense":
+            cat_totals[t.get("category", "Other")] += float(t.get("amount", 0.0))
     top_cat = max(cat_totals.items(), key=lambda x: x[1])[0] if cat_totals else "None"
 
-    # Check for optional API Key (Google Gemini or OpenAI)
+    # Optional Gemini API key check
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if gemini_key:
         try:
             import urllib.request
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
             sys_context = (
-                f"You are SpendSense AI Copilot, a sharp, encouraging personal finance advisor. "
-                f"User stats: Current Month Income: ₹{income:.2f}, Expenses: ₹{expenses:.2f}, "
-                f"Financial Health Score: {health['score']}/100 ({health['grade']}), "
-                f"Top expense category: {top_cat}, Forecasted next month spend: ₹{forecast['predicted_spend']:.2f}. "
-                f"Provide concise, practical advice in 2-4 sentences."
+                f"You are SpendSense AI Copilot, a helpful personal finance advisor. "
+                f"User stats: Income: ₹{income:.2f}, Expenses: ₹{expenses:.2f}, "
+                f"Health Score: {health['score']}/100 ({health['grade']}), "
+                f"Top category: {top_cat}, Forecasted next month spend: ₹{forecast['predicted_spend']:.2f}. "
+                f"Give concise, practical financial advice in 2-3 sentences."
             )
-            payload = {
-                "contents": [
-                    {"parts": [{"text": f"{sys_context}\n\nUser Question: {user_message}"}]}
-                ]
-            }
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
+            payload = {"contents": [{"parts": [{"text": f"{sys_context}\n\nUser Question: {user_message}"}]}]}
+            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=8) as response:
                 res_data = json.loads(response.read().decode("utf-8"))
                 return res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
         except Exception:
-            pass # Fall through to intelligent rule-based engine
+            pass
 
-    # Intelligent Rule-Based Financial Agent
     msg = user_message.lower()
     if "health" in msg or "score" in msg or "grade" in msg:
-        return f"Your Financial Health Score is {health['score']}/100 (Grade: {health['grade']}). Needs account for {health['needs_pct']:.0f}% of spending and Wants account for {health['wants_pct']:.0f}%. Focus on: {health['tips'][0]}"
+        return f"Your Financial Health Score is {health['score']}/100 (Grade: {health['grade']}). Needs: {health['needs_pct']:.0f}%, Wants: {health['wants_pct']:.0f}%. Key Tip: {health['tips'][0]}"
 
     if "forecast" in msg or "predict" in msg or "next month" in msg:
-        return f"Based on your 6-month ensemble trend, your forecasted spend for {forecast['next_month']} is ₹{forecast['predicted_spend']:.2f} (expected range: ₹{forecast['lower_bound']:.2f} – ₹{forecast['upper_bound']:.2f})."
+        return f"Based on your spending patterns, your projected spend for {forecast['next_month']} is ₹{forecast['predicted_spend']:.2f} (expected range: ₹{forecast['lower_bound']:.2f} – ₹{forecast['upper_bound']:.2f})."
 
     if "budget" in msg or "limit" in msg or "save" in msg:
         if budget:
-            rem = budget.amount - expenses
+            b_amt = float(budget.get("amount", 0.0))
+            rem = b_amt - expenses
             if rem >= 0:
-                return f"You've spent ₹{expenses:.2f} out of your ₹{budget.amount:.2f} budget. You have ₹{rem:.2f} remaining for this month."
+                return f"You've spent ₹{expenses:.2f} out of your ₹{b_amt:.2f} budget. You have ₹{rem:.2f} remaining."
             else:
-                return f"Alert: You have exceeded your ₹{budget.amount:.2f} budget by ₹{-rem:.2f}. Consider pausing discretionary purchases in {top_cat}."
-        return "You haven't set a budget for this month yet. Head to the Budget tab to set a monthly target!"
+                return f"Alert: You have exceeded your ₹{b_amt:.2f} budget by ₹{-rem:.2f}."
+        return "You haven't set a budget for this month yet. Go to the Budget tab to set one!"
 
-    if "top" in msg or "where" in msg or "category" in msg or "eating" in msg:
+    if "top" in msg or "where" in msg or "category" in msg:
         if top_cat != "None":
-            return f"Your highest expense category this month is '{top_cat}' at ₹{cat_totals[top_cat]:.2f} ({(cat_totals[top_cat]/expenses)*100:.0f}% of total spend)."
-        return "You don't have enough recorded expenses this month to determine your top spending category."
-
-    if "cut" in msg or "reduce" in msg or "advice" in msg:
-        return f"To improve cash flow quickly: 1) Trim discretionary expenses in '{top_cat}', 2) Review recurring subscriptions in the Subscriptions tab, and 3) Automate saving 20% right after your salary credits."
+            return f"Your highest expense category this month is '{top_cat}' at ₹{cat_totals[top_cat]:.2f}."
+        return "No expenses recorded this month yet."
 
     return (
-        f"Hello! I am your SpendSense Copilot. So far this month you've recorded ₹{expenses:.2f} in expenses "
-        f"and ₹{income:.2f} in income. Your top category is '{top_cat}'. "
-        f"Ask me about your 'health score', 'next month forecast', 'budget tips', or 'how to cut expenses'!"
+        f"Hello! I am your SpendSense Copilot. This month you've recorded ₹{expenses:.2f} in expenses "
+        f"and ₹{income:.2f} in income. Top category: '{top_cat}'. "
+        f"Ask me about your 'health score', 'next month forecast', or 'budget tips'!"
     )
 
 def summarize_spending(user_id):
-    """Produces dashboard summary bullets and active highlights."""
     health = calculate_financial_health(user_id)
     forecast = forecast_monthly_spend(user_id)
+    db = get_db()
     bullets = []
 
     bullets.append(f"Financial Health Score: {health['score']}/100 ({health['grade']} · {health['status']}).")
@@ -827,8 +757,7 @@ def summarize_spending(user_id):
     if forecast["predicted_spend"] > 0:
         bullets.append(f"AI forecasts ₹{forecast['predicted_spend']:.2f} spending in {forecast['next_month']} ({forecast['trend_direction']} trend).")
 
-    # Check for active anomalies
-    anomalies_count = Transaction.query.filter_by(user_id=user_id, is_anomaly=True).count()
+    anomalies_count = db.transactions.count_documents({"user_id": str(user_id), "is_anomaly": True})
     if anomalies_count > 0:
         bullets.append(f"⚠️ {anomalies_count} unusual or spike transactions flagged for your review.")
 

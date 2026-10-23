@@ -11,40 +11,28 @@ from flask import (
     flash, session, send_file, jsonify
 )
 from werkzeug.security import generate_password_hash, check_password_hash
-from werkzeug.utils import secure_filename
-from sqlalchemy import func, extract
+from bson import ObjectId
 
-from models import db, User, Transaction, Budget, SavingsGoal, Subscription
+from db_mongo import (
+    get_db, is_mock_db,
+    UserDoc, TransactionDoc, BudgetDoc, GoalDoc, SubscriptionDoc
+)
 from ai_engine import (
     categorize_expense, forecast_monthly_spend, summarize_spending,
     calculate_financial_health, detect_transaction_anomaly,
-    audit_user_anomalies, parse_receipt_text, process_receipt_file,
-    get_model_evaluation, scan_and_sync_subscriptions, chat_copilot,
+    parse_receipt_text, process_receipt_file,
+    scan_and_sync_subscriptions, chat_copilot,
     CATEGORIES
 )
 from pdf_generator import generate_pdf_statement
-from seed_data import seed_demo_data_for_user, ensure_demo_user
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "spendsense-dev-secret-key-final-year-2026")
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "spendsense-mongodb-secret-key-2026")
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
 
-# Database URI configuration with Render PostgreSQL compatibility
-raw_db_url = os.environ.get("DATABASE_URL", "sqlite:///expense_ai.db")
-if raw_db_url.startswith("postgres://"):
-    raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
-app.config["SQLALCHEMY_DATABASE_URI"] = raw_db_url
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8 MB max upload size
-
-db.init_app(app)
-
+# Initialize MongoDB connection on startup
 with app.app_context():
-    db.create_all()
-    # Create default demo user for seamless examiner/evaluator logins
-    try:
-        ensure_demo_user()
-    except Exception as e:
-        print(f"Demo user init notice: {e}")
+    get_db()
 
 
 def login_required(fn):
@@ -58,16 +46,24 @@ def login_required(fn):
 
 
 def current_user():
-    return db.session.get(User, session.get("user_id"))
+    if "user_id" not in session:
+        return None
+    db = get_db()
+    try:
+        user_doc = db.users.find_one({"_id": ObjectId(session["user_id"])})
+        return UserDoc(user_doc) if user_doc else None
+    except Exception:
+        return None
 
 
 @app.context_processor
 def inject_global_vars():
-    user = current_user() if session.get("user_id") else None
+    user = current_user()
     return {
         "CATEGORIES": CATEGORIES,
         "current_user_obj": user,
-        "active_currency": user.currency if user else "₹"
+        "active_currency": user.currency if user else "₹",
+        "is_mock_db": is_mock_db()
     }
 
 
@@ -84,29 +80,31 @@ def index():
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
+        db = get_db()
         name = request.form.get("name", "").strip()
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
         currency = request.form.get("currency", "₹")
-        
+
         if not name or not email or len(password) < 8:
             flash("Please provide your name, valid email, and a password of at least 8 characters.", "danger")
             return render_template("register.html")
 
-        if User.query.filter_by(email=email).first():
+        if db.users.find_one({"email": email}):
             flash("An account with that email already exists. Please sign in.", "warning")
             return render_template("register.html")
 
-        user = User(
-            name=name,
-            email=email,
-            password_hash=generate_password_hash(password),
-            currency=currency
-        )
-        db.session.add(user)
-        db.session.commit()
-        session["user_id"] = user.id
-        flash(f"Account created successfully! Welcome to SpendSense AI, {name.split()[0]}.", "success")
+        result = db.users.insert_one({
+            "name": name,
+            "email": email,
+            "password_hash": generate_password_hash(password),
+            "currency": currency,
+            "monthly_income": 0.0,
+            "created_at": datetime.utcnow()
+        })
+        session.clear()
+        session["user_id"] = str(result.inserted_id)
+        flash(f"Account created successfully! Welcome to SpendSense, {name.split()[0]}.", "success")
         return redirect(url_for("dashboard"))
 
     return render_template("register.html")
@@ -115,30 +113,21 @@ def register():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        db = get_db()
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
-        user = User.query.filter_by(email=email).first()
+        user_doc = db.users.find_one({"email": email})
 
-        if not user or not check_password_hash(user.password_hash, password):
+        if not user_doc or not check_password_hash(user_doc["password_hash"], password):
             flash("Incorrect email or password. Please verify and try again.", "danger")
             return render_template("login.html")
 
         session.clear()
-        session["user_id"] = user.id
-        flash(f"Welcome back, {user.name.split()[0]}!", "success")
+        session["user_id"] = str(user_doc["_id"])
+        flash(f"Welcome back, {user_doc.get('name', 'User').split()[0]}!", "success")
         return redirect(url_for("dashboard"))
 
     return render_template("login.html")
-
-
-@app.route("/demo-login")
-def demo_login():
-    """1-Click login for viva examiners and professors."""
-    user = ensure_demo_user()
-    session.clear()
-    session["user_id"] = user.id
-    flash("Logged in with Viva Demo Account (pre-loaded with 6 months of AI analyzed transactions).", "info")
-    return redirect(url_for("dashboard"))
 
 
 @app.route("/logout")
@@ -152,22 +141,29 @@ def logout():
 @login_required
 def settings():
     user = current_user()
+    db = get_db()
     if request.method == "POST":
-        user.name = request.form.get("name", user.name).strip()
-        user.currency = request.form.get("currency", user.currency)
+        name = request.form.get("name", user.name).strip()
+        currency = request.form.get("currency", user.currency)
         try:
-            user.monthly_income = float(request.form.get("monthly_income", user.monthly_income))
+            monthly_income = float(request.form.get("monthly_income", user.monthly_income))
         except ValueError:
-            pass
+            monthly_income = user.monthly_income
+
+        update_fields = {
+            "name": name,
+            "currency": currency,
+            "monthly_income": monthly_income
+        }
 
         new_password = request.form.get("new_password", "").strip()
         if new_password:
             if len(new_password) < 8:
                 flash("New password must be at least 8 characters.", "danger")
                 return render_template("settings.html", user=user)
-            user.password_hash = generate_password_hash(new_password)
+            update_fields["password_hash"] = generate_password_hash(new_password)
 
-        db.session.commit()
+        db.users.update_one({"_id": ObjectId(user.id)}, {"$set": update_fields})
         flash("Your profile preferences have been updated.", "success")
         return redirect(url_for("settings"))
 
@@ -175,50 +171,55 @@ def settings():
 
 
 # ---------------------------------------------------------
-# Core Dashboard Route
+# Dashboard Route
 # ---------------------------------------------------------
 @app.route("/dashboard")
 @login_required
 def dashboard():
     user = current_user()
+    db = get_db()
     today = date.today()
-    month_start = today.replace(day=1)
+    curr_m_str = today.strftime("%Y-%m")
 
-    # Transactions for current month
-    month_txs = Transaction.query.filter(
-        Transaction.user_id == user.id,
-        Transaction.tx_date >= month_start,
-        Transaction.tx_date <= today
-    ).all()
-
-    expenses = sum(t.amount for t in month_txs if t.kind == "expense")
-    income = sum(t.amount for t in month_txs if t.kind == "income")
+    # Current month transactions
+    month_txs_raw = list(db.transactions.find({
+        "user_id": str(user.id),
+        "tx_date": {"$regex": f"^{curr_m_str}"}
+    }))
+    
+    expenses = sum(float(t.get("amount", 0.0)) for t in month_txs_raw if t.get("kind") == "expense")
+    income = sum(float(t.get("amount", 0.0)) for t in month_txs_raw if t.get("kind") == "income")
     net_savings = income - expenses
 
     # Monthly Budget
-    budget_record = Budget.query.filter_by(user_id=user.id, month=today.strftime("%Y-%m")).first()
-    budget_amount = budget_record.amount if budget_record else 0.0
+    budget_doc = db.budgets.find_one({"user_id": str(user.id), "month": curr_m_str})
+    budget_amount = float(budget_doc.get("amount", 0.0)) if budget_doc else 0.0
 
-    # Category breakdown for current month
+    # Category breakdown
     cats = defaultdict(float)
-    for t in month_txs:
-        if t.kind == "expense":
-            cats[t.category] += t.amount
+    for t in month_txs_raw:
+        if t.get("kind") == "expense":
+            cats[t.get("category", "Other")] += float(t.get("amount", 0.0))
 
-    # Recent transactions
-    recent_txs = Transaction.query.filter_by(user_id=user.id).order_by(Transaction.tx_date.desc()).limit(7).all()
+    # Recent transactions (last 7)
+    recent_raw = list(db.transactions.find({"user_id": str(user.id)}).sort("tx_date", -1).limit(7))
+    recent_txs = [TransactionDoc(t) for t in recent_raw]
 
-    # AI Anomaly check
-    anomalies = Transaction.query.filter_by(user_id=user.id, is_anomaly=True).order_by(Transaction.tx_date.desc()).limit(3).all()
+    # Anomalies
+    anom_raw = list(db.transactions.find({"user_id": str(user.id), "is_anomaly": True}).sort("tx_date", -1).limit(3))
+    anomalies = [TransactionDoc(t) for t in anom_raw]
 
     # AI Forecast, Financial Health Score & Insights
     forecast = forecast_monthly_spend(user.id)
     health = calculate_financial_health(user.id)
     insights = summarize_spending(user.id)
 
-    # Active savings goals & Subscriptions
-    goals = SavingsGoal.query.filter_by(user_id=user.id, status="active").limit(3).all()
-    upcoming_subs = Subscription.query.filter_by(user_id=user.id, is_active=True).order_by(Subscription.next_due_date.asc()).limit(3).all()
+    # Active Goals & Upcoming Subscriptions
+    goals_raw = list(db.goals.find({"user_id": str(user.id), "status": "active"}).limit(3))
+    goals = [GoalDoc(g) for g in goals_raw]
+
+    subs_raw = list(db.subscriptions.find({"user_id": str(user.id), "is_active": True}).sort("next_due_date", 1).limit(3))
+    upcoming_subs = [SubscriptionDoc(s) for s in subs_raw]
 
     return render_template(
         "dashboard.html",
@@ -246,8 +247,9 @@ def dashboard():
 @login_required
 def transactions():
     user = current_user()
-    query = Transaction.query.filter_by(user_id=user.id)
-
+    db = get_db()
+    
+    query = {"user_id": str(user.id)}
     category = request.args.get("category", "")
     kind = request.args.get("kind", "")
     start = request.args.get("start", "")
@@ -255,27 +257,29 @@ def transactions():
     anomalies_only = request.args.get("anomalies_only", "")
 
     if category:
-        query = query.filter_by(category=category)
+        query["category"] = category
     if kind in ("expense", "income"):
-        query = query.filter_by(kind=kind)
+        query["kind"] = kind
     if anomalies_only == "1":
-        query = query.filter_by(is_anomaly=True)
+        query["is_anomaly"] = True
 
-    try:
-        if start:
-            query = query.filter(Transaction.tx_date >= datetime.strptime(start, "%Y-%m-%d").date())
-        if end:
-            query = query.filter(Transaction.tx_date <= datetime.strptime(end, "%Y-%m-%d").date())
-    except ValueError:
-        flash("Invalid date filter criteria applied.", "warning")
+    date_filters = {}
+    if start:
+        date_filters["$gte"] = start
+    if end:
+        date_filters["$lte"] = end
+    if date_filters:
+        query["tx_date"] = date_filters
 
-    rows = query.order_by(Transaction.tx_date.desc()).all()
-    total_filtered = sum(t.amount for t in rows if t.kind == "expense")
-    total_income_filtered = sum(t.amount for t in rows if t.kind == "income")
+    raw_txs = list(db.transactions.find(query).sort("tx_date", -1))
+    tx_list = [TransactionDoc(t) for t in raw_txs]
+
+    total_filtered = sum(t.amount for t in tx_list if t.kind == "expense")
+    total_income_filtered = sum(t.amount for t in tx_list if t.kind == "income")
 
     return render_template(
         "transactions.html",
-        transactions=rows,
+        transactions=tx_list,
         categories=CATEGORIES,
         total_filtered=total_filtered,
         total_income_filtered=total_income_filtered
@@ -286,15 +290,18 @@ def transactions():
 @login_required
 def new_transaction():
     user = current_user()
+    db = get_db()
+
     if request.method == "POST":
         description = request.form.get("description", "").strip()
         kind = request.form.get("kind", "expense")
         payment_method = request.form.get("payment_method", "UPI / Card")
         notes = request.form.get("notes", "").strip()
+        tx_date_str = request.form.get("tx_date", "").strip()
 
         try:
             amount = round(float(request.form.get("amount", "0")), 2)
-            tx_date = datetime.strptime(request.form.get("tx_date", ""), "%Y-%m-%d").date()
+            tx_date = datetime.strptime(tx_date_str, "%Y-%m-%d").date()
         except (ValueError, TypeError):
             flash("Please enter a valid monetary amount and date.", "danger")
             return redirect(url_for("new_transaction"))
@@ -303,12 +310,10 @@ def new_transaction():
             flash("Amount must be positive and description cannot be empty.", "danger")
             return redirect(url_for("new_transaction"))
 
-        # AI Categorization
         predicted = categorize_expense(description)
         user_cat = request.form.get("category", "").strip()
         final_category = user_cat if user_cat in CATEGORIES else predicted["category"]
 
-        # AI Anomaly check for expenses
         is_anomaly = False
         anomaly_reason = None
         if kind == "expense":
@@ -316,22 +321,21 @@ def new_transaction():
                 user.id, amount, final_category, tx_date, description
             )
 
-        tx = Transaction(
-            user_id=user.id,
-            description=description,
-            amount=amount,
-            tx_date=tx_date,
-            kind=kind,
-            category=final_category,
-            ai_category=predicted["category"],
-            ai_confidence=predicted["confidence"],
-            is_anomaly=is_anomaly,
-            anomaly_reason=anomaly_reason,
-            payment_method=payment_method,
-            notes=notes
-        )
-        db.session.add(tx)
-        db.session.commit()
+        db.transactions.insert_one({
+            "user_id": str(user.id),
+            "description": description,
+            "amount": amount,
+            "tx_date": tx_date.isoformat(),
+            "kind": kind,
+            "category": final_category,
+            "ai_category": predicted["category"],
+            "ai_confidence": predicted["confidence"],
+            "is_anomaly": is_anomaly,
+            "anomaly_reason": anomaly_reason,
+            "payment_method": payment_method,
+            "notes": notes,
+            "created_at": datetime.utcnow()
+        })
 
         if is_anomaly:
             flash(f"Transaction logged. ⚠️ AI flagged an anomaly: {anomaly_reason}", "warning")
@@ -348,11 +352,21 @@ def new_transaction():
     )
 
 
-@app.route("/transactions/<int:tx_id>/edit", methods=["GET", "POST"])
+@app.route("/transactions/<tx_id>/edit", methods=["GET", "POST"])
 @login_required
 def edit_transaction(tx_id):
     user = current_user()
-    tx = Transaction.query.filter_by(id=tx_id, user_id=user.id).first_or_404()
+    db = get_db()
+    
+    try:
+        raw_doc = db.transactions.find_one({"_id": ObjectId(tx_id), "user_id": str(user.id)})
+    except Exception:
+        raw_doc = None
+    if not raw_doc:
+        flash("Transaction not found.", "danger")
+        return redirect(url_for("transactions"))
+
+    tx = TransactionDoc(raw_doc)
 
     if request.method == "POST":
         description = request.form.get("description", "").strip()
@@ -360,33 +374,39 @@ def edit_transaction(tx_id):
         payment_method = request.form.get("payment_method", "UPI / Card")
         category = request.form.get("category", tx.category)
         notes = request.form.get("notes", "").strip()
+        tx_date_str = request.form.get("tx_date", "").strip()
 
         try:
             amount = round(float(request.form.get("amount", "0")), 2)
-            tx_date = datetime.strptime(request.form.get("tx_date", ""), "%Y-%m-%d").date()
+            tx_date = datetime.strptime(tx_date_str, "%Y-%m-%d").date()
         except (ValueError, TypeError):
             flash("Enter a valid amount and date.", "danger")
-            return redirect(url_for("edit_transaction", tx_id=tx.id))
+            return redirect(url_for("edit_transaction", tx_id=tx_id))
 
         if amount <= 0 or not description:
             flash("Amount must be positive and description cannot be empty.", "danger")
-            return redirect(url_for("edit_transaction", tx_id=tx.id))
+            return redirect(url_for("edit_transaction", tx_id=tx_id))
 
-        tx.description = description
-        tx.amount = amount
-        tx.tx_date = tx_date
-        tx.kind = kind
-        tx.category = category if category in CATEGORIES else "Other"
-        tx.payment_method = payment_method
-        tx.notes = notes
-
-        # Re-evaluate anomaly
+        final_cat = category if category in CATEGORIES else "Other"
+        is_anom, reason = False, None
         if kind == "expense":
-            is_anom, reason = detect_transaction_anomaly(user.id, amount, tx.category, tx_date, description)
-            tx.is_anomaly = is_anom
-            tx.anomaly_reason = reason
+            is_anom, reason = detect_transaction_anomaly(user.id, amount, final_cat, tx_date, description)
 
-        db.session.commit()
+        db.transactions.update_one(
+            {"_id": ObjectId(tx_id), "user_id": str(user.id)},
+            {"$set": {
+                "description": description,
+                "amount": amount,
+                "tx_date": tx_date.isoformat(),
+                "kind": kind,
+                "category": final_cat,
+                "payment_method": payment_method,
+                "notes": notes,
+                "is_anomaly": is_anom,
+                "anomaly_reason": reason
+            }}
+        )
+
         flash("Transaction updated successfully.", "success")
         return redirect(url_for("transactions"))
 
@@ -399,13 +419,16 @@ def edit_transaction(tx_id):
     )
 
 
-@app.route("/transactions/<int:tx_id>/delete", methods=["POST"])
+@app.route("/transactions/<tx_id>/delete", methods=["POST"])
 @login_required
 def delete_transaction(tx_id):
-    tx = Transaction.query.filter_by(id=tx_id, user_id=session["user_id"]).first_or_404()
-    db.session.delete(tx)
-    db.session.commit()
-    flash("Transaction deleted successfully.", "success")
+    user = current_user()
+    db = get_db()
+    try:
+        db.transactions.delete_one({"_id": ObjectId(tx_id), "user_id": str(user.id)})
+        flash("Transaction deleted successfully.", "success")
+    except Exception as e:
+        flash(f"Could not delete transaction: {e}", "danger")
     return redirect(url_for("transactions"))
 
 
@@ -444,6 +467,7 @@ def receipt_scanner():
 @login_required
 def budget():
     user = current_user()
+    db = get_db()
     month = request.args.get("month", date.today().strftime("%Y-%m"))
 
     if request.method == "POST":
@@ -457,7 +481,6 @@ def budget():
             flash("Please provide a valid month and a budget greater than zero.", "danger")
             return redirect(url_for("budget", month=month))
 
-        # Collect category-wise budget limits
         cat_limits = {}
         for c in CATEGORIES:
             limit_val = request.form.get(f"limit_{c}", "").strip()
@@ -469,53 +492,41 @@ def budget():
                 except ValueError:
                     pass
 
-        item = Budget.query.filter_by(user_id=user.id, month=month).first()
-        if item:
-            item.amount = amount
-            item.category_limits = json.dumps(cat_limits)
-        else:
-            db.session.add(Budget(
-                user_id=user.id,
-                month=month,
-                amount=amount,
-                category_limits=json.dumps(cat_limits)
-            ))
+        db.budgets.update_one(
+            {"user_id": str(user.id), "month": month},
+            {"$set": {
+                "user_id": str(user.id),
+                "month": month,
+                "amount": amount,
+                "category_limits": cat_limits,
+                "updated_at": datetime.utcnow()
+            }},
+            upsert=True
+        )
 
-        db.session.commit()
         flash("Monthly budget and category limits saved.", "success")
         return redirect(url_for("budget", month=month))
 
-    item = Budget.query.filter_by(user_id=user.id, month=month).first()
-    try:
-        first = datetime.strptime(month, "%Y-%m").date().replace(day=1)
-    except ValueError:
-        first = date.today().replace(day=1)
-        month = first.strftime("%Y-%m")
+    raw_budget = db.budgets.find_one({"user_id": str(user.id), "month": month})
+    budget_obj = BudgetDoc(raw_budget) if raw_budget else None
 
-    # Spent in month
-    spent = db.session.query(func.coalesce(func.sum(Transaction.amount), 0.0)).filter(
-        Transaction.user_id == user.id,
-        Transaction.kind == "expense",
-        extract("year", Transaction.tx_date) == first.year,
-        extract("month", Transaction.tx_date) == first.month
-    ).scalar() or 0.0
+    # Calculate total spent and category-wise spent in this month
+    cat_txs = list(db.transactions.find({
+        "user_id": str(user.id),
+        "kind": "expense",
+        "tx_date": {"$regex": f"^{month}"}
+    }))
+    spent = sum(float(t.get("amount", 0.0)) for t in cat_txs)
 
-    # Category breakdown for this month
-    cat_txs = Transaction.query.filter(
-        Transaction.user_id == user.id,
-        Transaction.kind == "expense",
-        extract("year", Transaction.tx_date) == first.year,
-        extract("month", Transaction.tx_date) == first.month
-    ).all()
     cat_spent = defaultdict(float)
     for t in cat_txs:
-        cat_spent[t.category] += t.amount
+        cat_spent[t.get("category", "Other")] += float(t.get("amount", 0.0))
 
-    category_limits = json.loads(item.category_limits) if (item and item.category_limits) else {}
+    category_limits = budget_obj.category_limits if budget_obj else {}
 
     return render_template(
         "budget.html",
-        budget=item,
+        budget=budget_obj,
         month=month,
         spent=float(spent),
         category_limits=category_limits,
@@ -530,6 +541,8 @@ def budget():
 @login_required
 def goals():
     user = current_user()
+    db = get_db()
+
     if request.method == "POST":
         action = request.form.get("action")
         if action == "create":
@@ -537,7 +550,8 @@ def goals():
             try:
                 target_amount = float(request.form.get("target_amount", "0"))
                 current_amount = float(request.form.get("current_amount", "0"))
-                target_date = datetime.strptime(request.form.get("target_date", ""), "%Y-%m-%d").date()
+                target_date_str = request.form.get("target_date", "").strip()
+                target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
                 if target_amount <= 0:
                     raise ValueError()
             except ValueError:
@@ -545,43 +559,47 @@ def goals():
                 return redirect(url_for("goals"))
 
             category = request.form.get("category", "General")
-            db.session.add(SavingsGoal(
-                user_id=user.id,
-                title=title,
-                target_amount=target_amount,
-                current_amount=current_amount,
-                target_date=target_date,
-                category=category
-            ))
-            db.session.commit()
+            db.goals.insert_one({
+                "user_id": str(user.id),
+                "title": title,
+                "target_amount": target_amount,
+                "current_amount": current_amount,
+                "target_date": target_date.isoformat(),
+                "category": category,
+                "status": "active",
+                "created_at": datetime.utcnow()
+            })
             flash(f"Goal '{title}' created successfully!", "success")
 
         elif action == "contribute":
             goal_id = request.form.get("goal_id")
             try:
                 contrib = float(request.form.get("contribution", "0"))
-                g = SavingsGoal.query.filter_by(id=goal_id, user_id=user.id).first_or_404()
-                g.current_amount += contrib
-                if g.current_amount >= g.target_amount:
-                    g.status = "completed"
-                    flash(f"🎉 Congratulations! You achieved your savings goal: '{g.title}'!", "success")
-                else:
-                    flash(f"Added {user.currency}{contrib:.2f} towards '{g.title}'.", "success")
-                db.session.commit()
-            except ValueError:
-                flash("Enter a valid contribution amount.", "danger")
+                g_raw = db.goals.find_one({"_id": ObjectId(goal_id), "user_id": str(user.id)})
+                if g_raw:
+                    new_curr = float(g_raw.get("current_amount", 0.0)) + contrib
+                    status = "completed" if new_curr >= float(g_raw.get("target_amount", 0.0)) else g_raw.get("status", "active")
+                    db.goals.update_one({"_id": ObjectId(goal_id)}, {"$set": {"current_amount": new_curr, "status": status}})
+                    if status == "completed":
+                        flash(f"🎉 Congratulations! You achieved your savings goal: '{g_raw.get('title')}'!", "success")
+                    else:
+                        flash(f"Added {user.currency}{contrib:.2f} towards '{g_raw.get('title')}'.", "success")
+            except Exception as e:
+                flash(f"Could not process contribution: {e}", "danger")
 
         elif action == "delete":
             goal_id = request.form.get("goal_id")
-            g = SavingsGoal.query.filter_by(id=goal_id, user_id=user.id).first_or_404()
-            db.session.delete(g)
-            db.session.commit()
-            flash("Savings goal deleted.", "info")
+            try:
+                db.goals.delete_one({"_id": ObjectId(goal_id), "user_id": str(user.id)})
+                flash("Savings goal deleted.", "info")
+            except Exception:
+                pass
 
         return redirect(url_for("goals"))
 
-    all_goals = SavingsGoal.query.filter_by(user_id=user.id).order_by(SavingsGoal.status.asc(), SavingsGoal.target_date.asc()).all()
-    return render_template("goals.html", goals=all_goals)
+    raw_goals = list(db.goals.find({"user_id": str(user.id)}).sort("target_date", 1))
+    goals_list = [GoalDoc(g) for g in raw_goals]
+    return render_template("goals.html", goals=goals_list)
 
 
 # ---------------------------------------------------------
@@ -591,17 +609,19 @@ def goals():
 @login_required
 def subscriptions():
     user = current_user()
+    db = get_db()
+
     if request.method == "POST":
         action = request.form.get("action")
         if action == "sync":
-            # Auto scan user history to identify recurring patterns
             scan_and_sync_subscriptions(user.id)
             flash("Scanned your transaction records and synchronized detected subscriptions.", "success")
         elif action == "create":
             name = request.form.get("name", "").strip()
             try:
                 amount = float(request.form.get("amount", "0"))
-                next_due = datetime.strptime(request.form.get("next_due_date", ""), "%Y-%m-%d").date()
+                next_due_str = request.form.get("next_due_date", "").strip()
+                next_due = datetime.strptime(next_due_str, "%Y-%m-%d").date()
                 if amount <= 0:
                     raise ValueError()
             except ValueError:
@@ -610,64 +630,40 @@ def subscriptions():
 
             billing_cycle = request.form.get("billing_cycle", "monthly")
             category = request.form.get("category", "Entertainment")
-            db.session.add(Subscription(
-                user_id=user.id,
-                name=name,
-                amount=amount,
-                billing_cycle=billing_cycle,
-                next_due_date=next_due,
-                category=category
-            ))
-            db.session.commit()
+            db.subscriptions.insert_one({
+                "user_id": str(user.id),
+                "name": name,
+                "amount": amount,
+                "billing_cycle": billing_cycle,
+                "next_due_date": next_due.isoformat(),
+                "category": category,
+                "is_active": True,
+                "created_at": datetime.utcnow()
+            })
             flash(f"Subscription '{name}' added.", "success")
 
         elif action == "delete":
             sub_id = request.form.get("sub_id")
-            s = Subscription.query.filter_by(id=sub_id, user_id=user.id).first_or_404()
-            db.session.delete(s)
-            db.session.commit()
-            flash("Subscription removed.", "info")
+            try:
+                db.subscriptions.delete_one({"_id": ObjectId(sub_id), "user_id": str(user.id)})
+                flash("Subscription removed.", "info")
+            except Exception:
+                pass
 
         return redirect(url_for("subscriptions"))
 
-    all_subs = Subscription.query.filter_by(user_id=user.id).order_by(Subscription.next_due_date.asc()).all()
-    monthly_burden = sum(s.amount if s.billing_cycle == "monthly" else (s.amount / 12.0) for s in all_subs if s.is_active)
+    raw_subs = list(db.subscriptions.find({"user_id": str(user.id)}).sort("next_due_date", 1))
+    subs_list = [SubscriptionDoc(s) for s in raw_subs]
+
+    monthly_burden = sum(s.amount if s.billing_cycle == "monthly" else (s.amount / 12.0) for s in subs_list if s.is_active)
     yearly_burden = monthly_burden * 12.0
 
     return render_template(
         "subscriptions.html",
-        subscriptions=all_subs,
+        subscriptions=subs_list,
         monthly_burden=round(monthly_burden, 2),
         yearly_burden=round(yearly_burden, 2)
     )
-
-
-# ---------------------------------------------------------
-# AI Model & Viva Defense Lab Route
-# ---------------------------------------------------------
-@app.route("/viva-lab")
-@login_required
-def viva_lab():
-    user = current_user()
-    metrics = get_model_evaluation()
-    forecast = forecast_monthly_spend(user.id)
-    return render_template(
-        "viva_lab.html",
-        metrics=metrics,
-        forecast=forecast
-    )
-
-
-# ---------------------------------------------------------
-# Demo Data Seeder (1-Click Viva Showcase)
-# ---------------------------------------------------------
-@app.route("/demo-seed", methods=["POST"])
-@login_required
-def demo_seed():
-    user = current_user()
-    seed_demo_data_for_user(user.id)
-    flash("🎉 Successfully seeded 6 months of realistic financial transactions, subscriptions, budgets, and anomalies! Ready for viva demonstration.", "success")
-    return redirect(url_for("dashboard"))
 
 
 # ---------------------------------------------------------
@@ -676,6 +672,9 @@ def demo_seed():
 @app.route("/import", methods=["GET", "POST"])
 @login_required
 def import_csv():
+    user = current_user()
+    db = get_db()
+
     if request.method == "POST":
         file = request.files.get("file")
         if not file or not file.filename.lower().endswith(".csv"):
@@ -713,30 +712,29 @@ def import_csv():
                 if category not in CATEGORIES:
                     category = predicted["category"]
 
-                # Anomaly check
                 is_anom, reason = detect_transaction_anomaly(
-                    session["user_id"], amount, category, tx_date, normalized["description"]
+                    user.id, amount, category, tx_date, normalized["description"]
                 )
 
-                db.session.add(Transaction(
-                    user_id=session["user_id"],
-                    description=normalized["description"],
-                    amount=amount,
-                    tx_date=tx_date,
-                    kind=kind,
-                    category=category,
-                    ai_category=predicted["category"],
-                    ai_confidence=predicted["confidence"],
-                    is_anomaly=is_anom,
-                    anomaly_reason=reason
-                ))
+                db.transactions.insert_one({
+                    "user_id": str(user.id),
+                    "description": normalized["description"],
+                    "amount": amount,
+                    "tx_date": tx_date.isoformat(),
+                    "kind": kind,
+                    "category": category,
+                    "ai_category": predicted["category"],
+                    "ai_confidence": predicted["confidence"],
+                    "is_anomaly": is_anom,
+                    "anomaly_reason": reason,
+                    "payment_method": "Imported",
+                    "created_at": datetime.utcnow()
+                })
                 count += 1
 
-            db.session.commit()
-            flash(f"Successfully imported and AI-categorized {count} transactions.", "success")
+            flash(f"Successfully imported and AI-categorized {count} transactions into MongoDB.", "success")
             return redirect(url_for("transactions"))
         except Exception as exc:
-            db.session.rollback()
             flash(f"Import failed: {exc}", "danger")
 
     return render_template("import.html")
@@ -745,8 +743,10 @@ def import_csv():
 @app.route("/export/csv")
 @login_required
 def export_csv():
-    rows = Transaction.query.filter_by(user_id=session["user_id"]).order_by(Transaction.tx_date.desc()).all()
-    stream = BytesIO()
+    user = current_user()
+    db = get_db()
+    raw_txs = list(db.transactions.find({"user_id": str(user.id)}).sort("tx_date", -1))
+    
     import io
     text_stream = io.StringIO()
     writer = csv.writer(text_stream)
@@ -754,18 +754,18 @@ def export_csv():
         "date", "description", "amount", "type", "category",
         "ai_category", "ai_confidence", "is_anomaly", "anomaly_reason", "payment_method"
     ])
-    for t in rows:
+    for t in raw_txs:
         writer.writerow([
-            t.tx_date.isoformat(),
-            t.description,
-            f"{t.amount:.2f}",
-            t.kind,
-            t.category,
-            t.ai_category,
-            f"{t.ai_confidence:.2f}",
-            "Yes" if t.is_anomaly else "No",
-            t.anomaly_reason or "",
-            t.payment_method
+            t.get("tx_date"),
+            t.get("description"),
+            f"{float(t.get('amount', 0.0)):.2f}",
+            t.get("kind"),
+            t.get("category"),
+            t.get("ai_category"),
+            f"{float(t.get('ai_confidence', 0.0)):.2f}",
+            "Yes" if t.get("is_anomaly") else "No",
+            t.get("anomaly_reason") or "",
+            t.get("payment_method", "UPI / Card")
         ])
     return send_file(
         BytesIO(text_stream.getvalue().encode("utf-8")),
@@ -779,15 +779,17 @@ def export_csv():
 @login_required
 def export_pdf():
     user = current_user()
-    txs = Transaction.query.filter_by(user_id=user.id).order_by(Transaction.tx_date.desc()).all()
+    db = get_db()
+    raw_txs = list(db.transactions.find({"user_id": str(user.id)}).sort("tx_date", -1))
+    tx_docs = [TransactionDoc(t) for t in raw_txs]
     health = calculate_financial_health(user.id)
     forecast = forecast_monthly_spend(user.id)
-    pdf_buffer = generate_pdf_statement(user, txs, health, forecast)
+    pdf_buffer = generate_pdf_statement(user, tx_docs, health, forecast)
     return send_file(
         pdf_buffer,
         mimetype="application/pdf",
         as_attachment=True,
-        download_name=f"spendsense_financial_statement_{date.today().strftime('%Y%m%d')}.pdf"
+        download_name=f"spendsense_statement_{date.today().strftime('%Y%m%d')}.pdf"
     )
 
 
@@ -797,7 +799,6 @@ def export_pdf():
 @app.route("/api/categorize", methods=["POST"])
 @login_required
 def api_categorize():
-    """Live interactive classification API for instant badges on keystroke."""
     data = request.get_json(silent=True) or {}
     text = data.get("description", "")
     result = categorize_expense(text)
@@ -807,22 +808,23 @@ def api_categorize():
 @app.route("/api/forecast")
 @login_required
 def api_forecast():
+    user = current_user()
     return jsonify({
-        "forecast": forecast_monthly_spend(session["user_id"]),
-        "insights": summarize_spending(session["user_id"]),
-        "health": calculate_financial_health(session["user_id"])
+        "forecast": forecast_monthly_spend(user.id),
+        "insights": summarize_spending(user.id),
+        "health": calculate_financial_health(user.id)
     })
 
 
 @app.route("/api/copilot", methods=["POST"])
 @login_required
 def api_copilot():
-    """AI financial chatbot endpoint."""
+    user = current_user()
     data = request.get_json(silent=True) or {}
     message = data.get("message", "").strip()
     if not message:
         return jsonify({"reply": "Please ask me a financial question."})
-    reply = chat_copilot(session["user_id"], message)
+    reply = chat_copilot(user.id, message)
     return jsonify({"reply": reply})
 
 

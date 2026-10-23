@@ -12,5 +12,7 @@ services:
         generateValue: true
       - key: FLASK_DEBUG
         value: "0"
+      - key: MONGO_URI
+        sync: false
       - key: GEMINI_API_KEY
         sync: false

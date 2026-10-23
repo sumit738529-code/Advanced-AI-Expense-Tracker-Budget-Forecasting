@@ -1,48 +1,41 @@
 {% extends "base.html" %}
-{% block title %}SpendSense AI — Advanced AI Expense Tracker & Budget Forecasting{% endblock %}
+{% block title %}SpendSense AI — Smart Expense Tracker & Budget Forecasting{% endblock %}
 
 {% block content %}
 <div class="row align-items-center g-5 py-4 py-md-5">
   <div class="col-lg-7">
     <div class="d-inline-flex align-items-center gap-2 px-3 py-1 rounded-pill mb-3" style="background:#e0e7ff; color:#4361ee; font-size:0.82rem; font-weight:700;">
-      <i class="bi bi-cpu-fill"></i> MSc / Final Year Project &bull; Machine Learning & Time-Series Engine
+      <i class="bi bi-database-check"></i> Powered by MongoDB &bull; Machine Learning &bull; Time-Series Engine
     </div>
 
     <h1 class="display-4 fw-bold lh-sm mb-3">
-      Autonomous Expense Tracking & <span style="background: linear-gradient(135deg, #4361ee, #8b5cf6); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">AI Budget Forecasting</span>
+      Take Control of Your Expenses with <span style="background: linear-gradient(135deg, #4361ee, #8b5cf6); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">AI Intelligence</span>
     </h1>
 
     <p class="lead text-secondary mb-4">
-      An enterprise-grade, explainable personal finance platform engineered with 
-      <strong>TF-IDF NLP text classification</strong>, 
-      <strong>multi-model time-series forecasting</strong>, 
-      <strong>spending anomaly detection</strong>, and 
-      <strong>smart receipt OCR</strong>.
+      Track daily spending with automatic <strong>machine learning categorization</strong>, forecast next month's budget with <strong>ensemble time-series algorithms</strong>, detect unusual expenditure spikes, and scan receipts in seconds.
     </p>
 
     <div class="d-flex flex-wrap align-items-center gap-3">
-      <a class="btn btn-primary btn-lg rounded-pill px-4 shadow-sm" href="{{ url_for('register') }}">
-        <i class="bi bi-person-plus me-1"></i> Create Account
+      <a class="btn btn-primary btn-lg rounded-pill px-5 shadow-sm" href="{{ url_for('register') }}">
+        <i class="bi bi-person-plus me-1"></i> Get Started Free
       </a>
       <a class="btn btn-outline-dark btn-lg rounded-pill px-4" href="{{ url_for('login') }}">
         Sign In
       </a>
-      <a class="btn btn-warning btn-lg text-dark fw-bold rounded-pill px-4 shadow-sm" href="{{ url_for('demo_login') }}">
-        <i class="bi bi-stars me-1"></i> 1-Click Viva Demo Login
-      </a>
     </div>
 
     <div class="d-flex align-items-center gap-4 mt-4 pt-2 text-secondary small">
-      <div><i class="bi bi-check-circle-fill text-success me-1"></i> Zero API keys required</div>
-      <div><i class="bi bi-check-circle-fill text-success me-1"></i> 100% Offline ML fallback</div>
-      <div><i class="bi bi-check-circle-fill text-success me-1"></i> Cloud Render ready</div>
+      <div><i class="bi bi-check-circle-fill text-success me-1"></i> Private MongoDB Storage</div>
+      <div><i class="bi bi-check-circle-fill text-success me-1"></i> Instant AI Categorization</div>
+      <div><i class="bi bi-check-circle-fill text-success me-1"></i> Render Cloud Ready</div>
     </div>
   </div>
 
   <div class="col-lg-5">
     <div class="health-score-card shadow-lg p-4">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <span class="badge bg-primary text-white">Live AI Engine Preview</span>
+        <span class="badge bg-primary text-white">Live AI Engine</span>
         <span class="health-grade-pill">A+ Grade</span>
       </div>
 
@@ -63,20 +56,20 @@
       </div>
 
       <div class="small text-secondary">
-        <i class="bi bi-shield-check text-success me-1"></i> Anomaly detector active (IQR + Z-score)
+        <i class="bi bi-shield-check text-success me-1"></i> Automatic anomaly & duplicate charge detection
       </div>
     </div>
   </div>
 </div>
 
-<!-- 6 Core Engineering Pillars -->
+<!-- Core Features -->
 <div class="row g-4 py-4">
   <div class="col-md-4">
     <div class="panel h-100 shadow-sm">
       <div class="metric-icon mb-3" style="background:#e0e7ff; color:#4361ee;"><i class="bi bi-cpu"></i></div>
-      <h5 class="fw-bold">TF-IDF NLP Classifier</h5>
+      <h5 class="fw-bold">Smart AI Categorizer</h5>
       <p class="text-secondary small mb-0">
-        Categorizes transactions with Laplace-smoothed Multinomial Naive Bayes. Provides token-level explainability and confidence scores.
+        Automatically categorizes expenses as you type with explainable token weights and confidence percentages.
       </p>
     </div>
   </div>
@@ -84,19 +77,9 @@
   <div class="col-md-4">
     <div class="panel h-100 shadow-sm">
       <div class="metric-icon mb-3" style="background:#dcfce7; color:#10b981;"><i class="bi bi-graph-up"></i></div>
-      <h5 class="fw-bold">Multi-Model Forecasting</h5>
+      <h5 class="fw-bold">Budget Forecasting</h5>
       <p class="text-secondary small mb-0">
-        Combines Ordinary Least Squares (OLS) trend, Holt's Double Exponential Smoothing, and Weighted Moving Averages with 90% confidence bands.
-      </p>
-    </div>
-  </div>
-
-  <div class="col-md-4">
-    <div class="panel h-100 shadow-sm">
-      <div class="metric-icon mb-3" style="background:#fee2e2; color:#ef4444;"><i class="bi bi-shield-exclamation"></i></div>
-      <h5 class="fw-bold">Spending Anomaly Detection</h5>
-      <p class="text-secondary small mb-0">
-        Statistical Interquartile Range (IQR) and Z-score outlier detection flags unusual expenditure spikes and duplicate POS charges.
+        Combines linear trend regression and double exponential smoothing to project upcoming spending limits.
       </p>
     </div>
   </div>
@@ -104,29 +87,9 @@
   <div class="col-md-4">
     <div class="panel h-100 shadow-sm">
       <div class="metric-icon mb-3" style="background:#fef3c7; color:#f59e0b;"><i class="bi bi-camera"></i></div>
-      <h5 class="fw-bold">Smart Receipt OCR</h5>
+      <h5 class="fw-bold">Receipt OCR Scanner</h5>
       <p class="text-secondary small mb-0">
-        Extracts merchants, dates, and amounts from bill images and text receipts using Computer Vision heuristics and regex parsers.
-      </p>
-    </div>
-  </div>
-
-  <div class="col-md-4">
-    <div class="panel h-100 shadow-sm">
-      <div class="metric-icon mb-3" style="background:#f3e8ff; color:#8b5cf6;"><i class="bi bi-arrow-repeat"></i></div>
-      <h5 class="fw-bold">Subscription Audit</h5>
-      <p class="text-secondary small mb-0">
-        Scans transaction history to automatically detect recurring services like Netflix, Spotify, gym memberships, and calculate annual commitment.
-      </p>
-    </div>
-  </div>
-
-  <div class="col-md-4">
-    <div class="panel h-100 shadow-sm">
-      <div class="metric-icon mb-3" style="background:#ccfbf1; color:#0d9488;"><i class="bi bi-file-earmark-pdf"></i></div>
-      <h5 class="fw-bold">Bank-Grade PDF Reports</h5>
-      <p class="text-secondary small mb-0">
-        Generates executive monthly financial statements with ReportLab, including 50/30/20 breakdown, transaction logs, and KPI summaries.
+        Upload or paste bills from stores, restaurants, and utilities to extract amounts and line items directly to your ledger.
       </p>
     </div>
   </div>
